@@ -2,6 +2,8 @@
 from aiogram import Router, F
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from pyzabbix import ZabbixAPI
+from services.zabbix_api import zabbix_api
+from services.message_utils import edit_message_text
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.filters.state import State, StatesGroup
@@ -72,7 +74,7 @@ async def process_comment(message: Message, state: FSMContext):
         await update_incident_message(incident, remove_buttons=True)
         
         # Закрываем событие в Zabbix
-        await zabbix_api.acknowledge_event(event_id, comment)
+        await zabbix_api.event.acknowledge(eventids=[event_id], message=comment)
     
     await state.clear()
 
@@ -100,10 +102,9 @@ async def update_incident_message(incident: dict, remove_buttons=False):
             [InlineKeyboardButton(text="Отклонить", callback_data=f"reject:{incident['event_id']}")]
         ])
     
-    await bot.edit_message_text(
+    await edit_message_text(
         chat_id=incident['chat_id'],
         message_id=incident['message_id'],
         text=text,
-        parse_mode="Markdown",
         reply_markup=reply_markup
     )
