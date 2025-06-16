@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  zabbix-telegram-bot:
+    build: .
+    container_name: zabbix-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Moscow
+    # Используем сеть хоста для простоты доступа к PostgreSQL
+    network_mode: host
