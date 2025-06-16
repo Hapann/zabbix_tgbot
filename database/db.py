@@ -10,14 +10,14 @@ import sys
 load_dotenv()
 
 # Получение данных для подключения к БД из переменных окружения
-DB_USER = urllib.parse.quote_plus(os.getenv("DB_USER", ""))
-DB_PASS = urllib.parse.quote_plus(os.getenv("DB_PASS", ""))
-DB_HOST = urllib.parse.quote_plus(os.getenv("DB_HOST", ""))
-DB_NAME = urllib.parse.quote_plus(os.getenv("DB_NAME", ""))
-DB_PORT = os.getenv("DB_PORT", "5432")
+POSTGRES_USER = urllib.parse.quote_plus(os.getenv("POSTGRES_USER", ""))
+POSTGRES_PASSWORD = urllib.parse.quote_plus(os.getenv("POSTGRES_PASSWORD", ""))
+POSTGRES_HOST = urllib.parse.quote_plus(os.getenv("POSTGRES_HOST", ""))
+POSTGRES_DB = urllib.parse.quote_plus(os.getenv("POSTGRES_DB", ""))
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 
 # Создание строки подключения
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
 try:
     # Создание движка
@@ -26,7 +26,9 @@ try:
     # Проверка соединения
     with engine.connect() as conn:
         pass
-    print(f"Успешное подключение к PostgreSQL по адресу {DB_HOST}:{DB_PORT}")
+    print(
+        f"Успешное подключение к PostgreSQL по адресу {POSTGRES_HOST}:{POSTGRES_PORT}"
+    )
 except Exception as e:
     print(f"Не удалось подключиться к PostgreSQL: {e}")
     print("Убедитесь, что PostgreSQL запущен и доступен по указанным параметрам.")
