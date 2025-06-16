@@ -1,44 +1,80 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, Integer, BigInteger, Text, Enum, TIMESTAMP
-import enum
-from config import config
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+import os
+import urllib.parse
+from dotenv import load_dotenv
+import sys
 
+# Загрузка переменных окружения
+load_dotenv()
+
+# Получение данных для подключения к БД из переменных окружения
+DB_USER = urllib.parse.quote_plus(os.getenv("DB_USER", ""))
+DB_PASS = urllib.parse.quote_plus(os.getenv("DB_PASS", ""))
+DB_HOST = urllib.parse.quote_plus(os.getenv("DB_HOST", ""))
+DB_NAME = urllib.parse.quote_plus(os.getenv("DB_NAME", ""))
+DB_PORT = os.getenv("DB_PORT", "5432")
+
+# Создание строки подключения
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+try:
+    # Создание движка
+    engine = create_engine(DATABASE_URL)
+
+    # Проверка соединения
+    with engine.connect() as conn:
+        pass
+    print(f"Успешное подключение к PostgreSQL по адресу {DB_HOST}:{DB_PORT}")
+except Exception as e:
+    print(f"Не удалось подключиться к PostgreSQL: {e}")
+    print("Убедитесь, что PostgreSQL запущен и доступен по указанным параметрам.")
+    print("Проверьте параметры подключения в файле .env")
+    sys.exit(1)  # Завершаем программу с ошибкой
+
+# Создание базового класса для моделей
 Base = declarative_base()
 
-
-class IncidentStatus(enum.Enum):
-    open = "open"
-    in_progress = "in_progress"
-    closed = "closed"
-    rejected = "rejected"
+# Создание сессии
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-class Incident(Base):
-    __tablename__ = "incidents"
+# Определение моделей
+class User(Base):
+    __tablename__ = "users"
 
-    event_id = Column(String(50), primary_key=True)
-    message_id = Column(Integer, nullable=False)
-    chat_id = Column(BigInteger, nullable=False)
-    thread_id = Column(Integer)
-    status = Column(Enum(IncidentStatus), nullable=False, default=IncidentStatus.open)
-    assigned_to = Column(String(100))
-    resolution_comment = Column(Text)
-    original_text = Column(Text, nullable=False)
-    created_at = Column(TIMESTAMP, server_default="now()")
-    updated_at = Column(TIMESTAMP, server_default="now()", onupdate="now()")
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(Integer, unique=True, index=True)
+    username = Column(String, nullable=True)
+    is_admin = Column(Boolean, default=False)
+    zabbix_token = Column(String, nullable=True)
 
-
-# Используем имеющуюся строку подключения
-# Убедитесь, что она использует asyncpg драйвер
-DB_URL = config.DB_URL
-if not DB_URL.startswith("postgresql+asyncpg"):
-    DB_URL = DB_URL.replace("postgresql://", "postgresql+asyncpg://")
-
-engine = create_async_engine(DB_URL, echo=True)
-async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    # Отношения
+    subscriptions = relationship("Subscription", back_populates="user")
 
 
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    host_id = Column(String)
+
+    # Отношения
+    user = relationship("User", back_populates="subscriptions")
+
+
+# Функция для создания таблиц (синхронная)
+def create_tables():
+    Base.metadata.create_all(bind=engine)
+
+
+# Асинхронная функция-обертка для совместимости с async кодом
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        create_tables()
+        print("База данных успешно инициализирована")
+    except Exception as e:
+        print(f"Ошибка при инициализации базы данных: {e}")
+        sys.exit(1)  # Завершаем программу с ошибкой
