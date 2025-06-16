@@ -1,5 +1,6 @@
 # services/message_utils.py
 from aiogram import Bot
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from config import config
 from database import db
 

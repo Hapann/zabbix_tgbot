@@ -1,5 +1,7 @@
 # handlers/callbacks.py
 from aiogram import Router, F
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from pyzabbix import ZabbixAPI
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.filters.state import State, StatesGroup
