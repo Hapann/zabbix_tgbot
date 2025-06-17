@@ -1,6 +1,8 @@
 import httpx
-from config import config, app_logger
+import logging
+from config import config, get_logger
 
+logger = get_logger()
 
 class ZabbixAPI:
     def __init__(self):
@@ -8,7 +10,7 @@ class ZabbixAPI:
         self.auth_token = None
         self.auth_user = config.ZABBIX_USER
         self.auth_password = config.ZABBIX_PASSWORD
-        app_logger.info(f"Инициализация ZabbixAPI для {self.url}")
+        logger.info(f"Инициализация ZabbixAPI для {self.url}")
 
     async def login(self):
         """Аутентификация в Zabbix API"""
@@ -26,14 +28,14 @@ class ZabbixAPI:
 
                 if "result" in result:
                     self.auth_token = result["result"]
-                    app_logger.info("Успешная аутентификация в Zabbix API")
+                    get_logger.info("Успешная аутентификация в Zabbix API")
                     return True
                 else:
                     error = result.get("error", {}).get("data", "Unknown error")
-                    app_logger.error(f"Ошибка аутентификации: {error}")
+                    get_logger.error(f"Ошибка аутентификации: {error}")
                     return False
         except Exception as e:
-            app_logger.exception(f"Ошибка подключения к Zabbix API: {str(e)}")
+            get_logger.exception(f"Ошибка подключения к Zabbix API: {str(e)}")
             return False
 
     async def acknowledge_event(self, event_id, comment):
@@ -59,14 +61,14 @@ class ZabbixAPI:
                 result = response.json()
 
                 if "result" in result:
-                    app_logger.info(f"Событие {event_id} успешно закрыто в Zabbix")
+                    get_logger.info(f"Событие {event_id} успешно закрыто в Zabbix")
                     return True
                 else:
                     error = result.get("error", {}).get("data", "Unknown error")
-                    app_logger.error(f"Ошибка закрытия события: {error}")
+                    get_logger.error(f"Ошибка закрытия события: {error}")
                     return False
         except Exception as e:
-            app_logger.exception(f"Ошибка при закрытии события: {str(e)}")
+            get_logger.exception(f"Ошибка при закрытии события: {str(e)}")
             return False
 
 

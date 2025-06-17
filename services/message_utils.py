@@ -1,7 +1,9 @@
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from config import config, app_logger
+from config import config, get_logger
+import logging
 
+logger = get_logger()
 bot = Bot(token=config.BOT_TOKEN, parse_mode="Markdown")
 
 
@@ -32,10 +34,10 @@ async def send_incident_notification(event_id: str, subject: str, message: str) 
             reply_markup=keyboard,
         )
 
-        app_logger.info(f"Уведомление отправлено для event_id: {event_id}")
+        logger.info(f"Уведомление отправлено для event_id: {event_id}")
         return result.message_id
     except Exception as e:
-        app_logger.error(f"Ошибка отправки уведомления: {str(e)}")
+        logger.error(f"Ошибка отправки уведомления: {str(e)}")
         return None
 
 
@@ -47,6 +49,6 @@ async def edit_message_text(
         await bot.edit_message_text(
             chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup
         )
-        app_logger.debug(f"Сообщение {message_id} обновлено")
+        get_logger.debug(f"Сообщение {message_id} обновлено")
     except Exception as e:
-        app_logger.error(f"Ошибка редактирования сообщения: {str(e)}")
+        get_logger.error(f"Ошибка редактирования сообщения: {str(e)}")

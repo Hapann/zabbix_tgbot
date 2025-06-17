@@ -8,7 +8,10 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.filters.state import State, StatesGroup
 from database import db
+import logging
+from config import get_logger
 
+logger = get_logger()
 router = Router()
 
 class CommentState(StatesGroup):

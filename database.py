@@ -1,13 +1,14 @@
 import asyncpg
-from config import config, app_logger
 import logging
+from config import config, get_logger
+
+logger = get_logger()
 
 class Database:
     def __init__(self):
         self.pool = None
 
     async def create_pool(self):
-        """Создание пула соединений с PostgreSQL"""
         try:
             self.pool = await asyncpg.create_pool(
                 dsn=config.DB_URL,
@@ -15,9 +16,9 @@ class Database:
                 max_size=20,
                 command_timeout=60
             )
-            app_logger.info(f"Пул соединений с БД создан: {config.DB_URL}")
+            logger.info(f"Пул соединений с БД создан: {config.DB_URL}")
         except Exception as e:
-            app_logger.error(f"Ошибка создания пула соединений: {str(e)}")
+            logger.error(f"Ошибка создания пула соединений: {str(e)}")
             raise
 
     async def execute(self, query: str, *args):
@@ -26,7 +27,7 @@ class Database:
             async with self.pool.acquire() as conn:
                 return await conn.execute(query, *args)
         except Exception as e:
-            app_logger.error(f"Ошибка выполнения запроса: {query} | {str(e)}")
+            get_logger.error(f"Ошибка выполнения запроса: {query} | {str(e)}")
             raise
 
     async def create_tables(self):
@@ -45,6 +46,6 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        app_logger.info("Таблица incidents создана/проверена")
+        get_logger.info("Таблица incidents создана/проверена")
 
 db = Database()
