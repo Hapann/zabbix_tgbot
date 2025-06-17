@@ -7,7 +7,6 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    environment:
-      - TZ=Europe/Moscow
-    # Используем сеть хоста для простоты доступа к PostgreSQL
-    network_mode: host
+    volumes:
+      - ./logs:/logs # РњРѕРЅС‚РёСЂСѓРµРј РїР°РїРєСѓ СЃ Р»РѕРіР°РјРё
+    network_mode: host # Р”Р»СЏ РґРѕСЃС‚СѓРїР° Рє PostgreSQL РЅР° localhost

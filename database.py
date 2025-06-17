@@ -1,33 +1,37 @@
-# database.py
 import asyncpg
-from asyncpg import Pool
-from config import config
-
+from config import config, app_logger
+import logging
 
 class Database:
     def __init__(self):
-        self.pool: Pool = None
+        self.pool = None
 
     async def create_pool(self):
-        self.pool = await asyncpg.create_pool(
-            dsn=config.DB_URL, min_size=5, max_size=20, command_timeout=60
-        )
+        """Создание пула соединений с PostgreSQL"""
+        try:
+            self.pool = await asyncpg.create_pool(
+                dsn=config.DB_URL,
+                min_size=5,
+                max_size=20,
+                command_timeout=60
+            )
+            app_logger.info(f"Пул соединений с БД создан: {config.DB_URL}")
+        except Exception as e:
+            app_logger.error(f"Ошибка создания пула соединений: {str(e)}")
+            raise
 
     async def execute(self, query: str, *args):
-        async with self.pool.acquire() as conn:
-            return await conn.execute(query, *args)
-
-    async def fetch(self, query: str, *args):
-        async with self.pool.acquire() as conn:
-            return await conn.fetch(query, *args)
-
-    async def fetchrow(self, query: str, *args):
-        async with self.pool.acquire() as conn:
-            return await conn.fetchrow(query, *args)
+        """Выполнение SQL-запроса без возврата результатов"""
+        try:
+            async with self.pool.acquire() as conn:
+                return await conn.execute(query, *args)
+        except Exception as e:
+            app_logger.error(f"Ошибка выполнения запроса: {query} | {str(e)}")
+            raise
 
     async def create_tables(self):
-        await self.execute(
-            """
+        """Создание таблиц в базе данных"""
+        await self.execute("""
             CREATE TABLE IF NOT EXISTS incidents (
                 event_id VARCHAR(50) PRIMARY KEY,
                 message_id INTEGER NOT NULL,
@@ -40,8 +44,7 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
-
+        """)
+        app_logger.info("Таблица incidents создана/проверена")
 
 db = Database()

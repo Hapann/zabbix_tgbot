@@ -1,7 +1,7 @@
 # handlers/callbacks.py
 from aiogram import Router, F
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-from pyzabbix import ZabbixAPI
+from services.message_utils import edit_message_text
 from services.zabbix_api import zabbix_api
 from services.message_utils import edit_message_text
 from aiogram.types import CallbackQuery, Message
