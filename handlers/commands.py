@@ -18,16 +18,16 @@ def log_command(message: Message, command: str):
 def incident_buttons(incident_id: int, status: str):
     if status == "new":
         buttons = [
-            InlineKeyboardButton(text="В работу", callback_data=f"take_{incident_id}"),
-            InlineKeyboardButton(text="Отклонить", callback_data=f"reject_{incident_id}")
+            [InlineKeyboardButton(text="В работу", callback_data=f"take_{incident_id}"),
+             InlineKeyboardButton(text="Отклонить", callback_data=f"reject_{incident_id}")]
         ]
     elif status == "in_progress":
         buttons = [
-            InlineKeyboardButton(text="Закрыть", callback_data=f"close_{incident_id}")
+            [InlineKeyboardButton(text="Закрыть", callback_data=f"close_{incident_id}")]
         ]
     else:
         buttons = []
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 @router.message(Command(commands=["help"]))
 async def help_handler(message: Message):
@@ -36,7 +36,8 @@ async def help_handler(message: Message):
         "Этот бот принимает алерты из Zabbix и позволяет управлять инцидентами.\n"
         "Команды:\n"
         "/help - помощь\n"
-        "/rules - инструкция по работе с ботом"
+        "/rules - инструкция по работе с ботом\n"
+        "/stats - статистика по инцидентам"
     )
 
 @router.message(Command(commands=["rules"]))
@@ -50,46 +51,46 @@ async def rules_handler(message: Message):
         "4. Все действия фиксируются в базе."
     )
 
-# Обработка кнопок (callback)
-@router.callback_query(F.data.startswith("take_"))
-async def take_in_work(callback: CallbackQuery, db: Database):
-    incident_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    username = f"@{callback.from_user.username}" if callback.from_user.username else "без username"
-    logger.info(f"Пользователь {user_id} ({username}) - Взятие инцидента {incident_id} в работу")
-    await callback.message.answer("Пожалуйста, напишите комментарий для взятия в работу.")
+@router.message(Command(commands=["stats"]))
+async def stats_handler(message: Message, db: Database):
+    log_command(message, "/stats")
+    try:
+        stats = await db.get_incident_stats()
+        response = (
+            "📊 Статистика инцидентов:\n"
+            f"• Всего инцидентов: {stats['total']}\n"
+            f"• В работе: {stats['in_progress']}\n"
+            f"• Закрыто: {stats['closed']}\n"
+            f"• Отклонено: {stats['rejected']}"
+        )
+        await message.answer(response)
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики: {e}")
+        await message.answer("Произошла ошибка при получении статистики.")
 
-@router.callback_query(F.data.startswith("reject_"))
-async def reject_incident(callback: CallbackQuery, db: Database):
-    incident_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    username = f"@{callback.from_user.username}" if callback.from_user.username else "без username"
-    logger.info(f"Пользователь {user_id} ({username}) - Отклонение инцидента {incident_id}")
-    await callback.message.answer("Пожалуйста, напишите комментарий для отклонения инцидента.")
-
-@router.callback_query(F.data.startswith("close_"))
-async def close_incident(callback: CallbackQuery, db: Database):
-    incident_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    username = f"@{callback.from_user.username}" if callback.from_user.username else "без username"
-    logger.info(f"Пользователь {user_id} ({username}) - Закрытие инцидента {incident_id}")
-    await callback.message.answer("Пожалуйста, напишите комментарий для закрытия инцидента.")
-    
-
-async def send_incident_to_group(bot, incident_id, event, node, trigger, status, severity, details):
+async def send_incident_to_group(bot, incident_id: int, event: str, node: str, 
+                               trigger: str, status: str, severity: str, details: str):
     text = (
+        f"🚨 <b>Новый инцидент #{incident_id}</b>\n"
         f"<b>Событие:</b> {event}\n"
         f"<b>На узле:</b> {node}\n"
-        f"<b>Сработал триггер:</b> {trigger}\n"
+        f"<b>Триггер:</b> {trigger}\n"
         f"<b>Состояние:</b> {status}\n"
         f"<b>Уровень критичности:</b> {severity}\n"
-        f"<b>Подробности:</b> {details}"
+        f"<b>Подробности:</b> {details}\n"
+        f"<b>Время:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
-    keyboard = incident_buttons(incident_id, status)
-    await bot.send_message(
-        chat_id=GROUP_ID,
-        text=text,
-        reply_markup=keyboard,
-        message_thread_id=TOPIC_ID,
-        parse_mode="HTML"
-    )
+    
+    keyboard = incident_buttons(incident_id, "new")
+    
+    try:
+        await bot.send_message(
+            chat_id=GROUP_ID,
+            text=text,
+            reply_markup=keyboard,
+            message_thread_id=TOPIC_ID,
+            parse_mode="HTML"
+        )
+        logger.info(f"Инцидент #{incident_id} отправлен в группу")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке инцидента #{incident_id}: {e}")
