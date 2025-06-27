@@ -8,6 +8,12 @@ from logger.logger import logger
 
 router = Router()
 
+def log_command(message: Message, command: str):
+    """Логирование вызова команды"""
+    user_id = message.from_user.id
+    username = f"@{message.from_user.username}" if message.from_user.username else "без username"
+    logger.info(f"Пользователь {user_id} ({username}) - Успешно вызвана команда {command}")
+
 # Кнопки для инцидента
 def incident_buttons(incident_id: int, status: str):
     if status == "new":
@@ -25,6 +31,7 @@ def incident_buttons(incident_id: int, status: str):
 
 @router.message(Command(commands=["help"]))
 async def help_handler(message: Message):
+    log_command(message, "/help")
     await message.answer(
         "Этот бот принимает алерты из Zabbix и позволяет управлять инцидентами.\n"
         "Команды:\n"
@@ -34,6 +41,7 @@ async def help_handler(message: Message):
 
 @router.message(Command(commands=["rules"]))
 async def rules_handler(message: Message):
+    log_command(message, "/rules")
     await message.answer(
         "Правила работы с ботом:\n"
         "1. При получении алерта вы можете взять инцидент в работу или отклонить.\n"
@@ -46,18 +54,25 @@ async def rules_handler(message: Message):
 @router.callback_query(F.data.startswith("take_"))
 async def take_in_work(callback: CallbackQuery, db: Database):
     incident_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+    username = f"@{callback.from_user.username}" if callback.from_user.username else "без username"
+    logger.info(f"Пользователь {user_id} ({username}) - Взятие инцидента {incident_id} в работу")
     await callback.message.answer("Пожалуйста, напишите комментарий для взятия в работу.")
-    # Сохраняем состояние, что ждем комментарий (нужно реализовать FSM, упрощу)
-    # Для учебного примера можно просто отправить сообщение и ждать следующий текст
 
 @router.callback_query(F.data.startswith("reject_"))
 async def reject_incident(callback: CallbackQuery, db: Database):
     incident_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+    username = f"@{callback.from_user.username}" if callback.from_user.username else "без username"
+    logger.info(f"Пользователь {user_id} ({username}) - Отклонение инцидента {incident_id}")
     await callback.message.answer("Пожалуйста, напишите комментарий для отклонения инцидента.")
 
 @router.callback_query(F.data.startswith("close_"))
 async def close_incident(callback: CallbackQuery, db: Database):
     incident_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+    username = f"@{callback.from_user.username}" if callback.from_user.username else "без username"
+    logger.info(f"Пользователь {user_id} ({username}) - Закрытие инцидента {incident_id}")
     await callback.message.answer("Пожалуйста, напишите комментарий для закрытия инцидента.")
     
 

@@ -8,24 +8,33 @@ from handlers import commands, fsm_handlers, unknown
 from logger import logger
 
 async def main():
-    bot = Bot(
-        token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode="HTML")
-    )
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
+    try:
+        bot = Bot(
+            token=BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode="HTML")
+        )
+        storage = MemoryStorage()
+        dp = Dispatcher(storage=storage)
 
-    db = Database()
-    await db.connect()
+        logger.info("Инициализация базы данных...")
+        db = Database()
+        await db.connect()
 
-    dp['db'] = db
+        dp['db'] = db
 
-    dp.include_router(commands.router)
-    dp.include_router(fsm_handlers.router)
-    dp.include_router(unknown.router)
+        dp.include_router(commands.router)
+        dp.include_router(fsm_handlers.router)
+        dp.include_router(unknown.router)
 
-    logger.info("Бот запущен")
-    await dp.start_polling(bot)
+        logger.info("Бот запущен и готов к работе")
+        await dp.start_polling(bot)
+        
+    except Exception as e:
+        logger.critical(f"Ошибка при запуске бота: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.critical(f"Критическая ошибка: {str(e)}")
