@@ -6,7 +6,7 @@ from logger import logger
 class Database:
     def __init__(self):
         self.pool = None
-        logger.info(f"Инициализация базы данных: {DB_NAME}@{DB_HOST}:{DB_PORT}")
+        logger.info(f"Попытка подключиться к базе данных: {DB_NAME}@{DB_HOST}:{DB_PORT}")
 
     async def connect(self):
         try:
