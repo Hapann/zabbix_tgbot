@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import Database
 from globals import GROUP_ID, TOPIC_ID
-from logger import logger
+from logger.logger import logger
 
 router = Router()
 
