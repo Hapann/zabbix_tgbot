@@ -3,100 +3,167 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
-from database.db import Database  # Убрали create_incident
+from database.db import Database
 from logger.logger import logger
 from globals import GROUP_ID, TOPIC_ID
 from datetime import datetime
+from utils.messages import format_incident_message
+from utils.keyboards import get_incident_keyboard
 
 router = Router()
 
 class IncidentStates(StatesGroup):
     waiting_for_comment = State()
+    waiting_for_reassign = State()
 
-# Новый обработчик для кнопок изменения статуса
-@router.callback_query(F.data.startswith("status_"))
-async def change_incident_status(callback: CallbackQuery, state: FSMContext, db: Database):
-    action, incident_id, new_status = callback.data.split("_")
+@router.callback_query(F.data.startswith("take_"))
+async def take_in_work(callback: CallbackQuery, state: FSMContext, db: Database):
+    incident_id = int(callback.data.split("_")[1])
+    user = callback.from_user.username or callback.from_user.full_name
+    user_id = callback.from_user.id
+    
+    logger.info(f"Пользователь {user} (ID: {user_id}) начал взятие инцидента #{incident_id} в работу")
+    
+    await state.update_data(
+        action="take", 
+        incident_id=incident_id,
+        original_message_id=callback.message.message_id,
+        user_id=user_id,
+        username=user
+    )
+    await callback.message.answer("✍️ Пожалуйста, напишите комментарий для взятия инцидента в работу:")
+    await IncidentStates.waiting_for_comment.set()
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("reject_"))
+async def reject_incident(callback: CallbackQuery, state: FSMContext, db: Database):
+    incident_id = int(callback.data.split("_")[1])
+    user = callback.from_user.username or callback.from_user.full_name
+    user_id = callback.from_user.id
+    
+    logger.info(f"Пользователь {user} (ID: {user_id}) начал отклонение инцидента #{incident_id}")
+    
+    await state.update_data(
+        action="reject", 
+        incident_id=incident_id,
+        original_message_id=callback.message.message_id,
+        user_id=user_id,
+        username=user
+    )
+    await callback.message.answer("✍️ Пожалуйста, напишите комментарий для отклонения инцидента:")
+    await IncidentStates.waiting_for_comment.set()
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("close_"))
+async def close_incident(callback: CallbackQuery, state: FSMContext, db: Database):
+    incident_id = int(callback.data.split("_")[1])
+    user = callback.from_user.username or callback.from_user.full_name
+    user_id = callback.from_user.id
+    
+    logger.info(f"Пользователь {user} (ID: {user_id}) начал закрытие инцидента #{incident_id}")
+    
+    await state.update_data(
+        action="close", 
+        incident_id=incident_id,
+        original_message_id=callback.message.message_id,
+        user_id=user_id,
+        username=user
+    )
+    await callback.message.answer("✍️ Пожалуйста, напишите комментарий для закрытия инцидента:")
+    await IncidentStates.waiting_for_comment.set()
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("reassign_"))
+async def reassign_incident(callback: CallbackQuery, state: FSMContext, db: Database):
+    incident_id = int(callback.data.split("_")[1])
     user = callback.from_user.username or callback.from_user.full_name
     
-    try:
-        # Обновляем статус в базе данных
-        await db.update_incident_status(
-            incident_id=int(incident_id),
-            status=new_status
-        )
-        
-        # Формируем текст для уведомления
-        status_text = {
-            "open": "открыт",
-            "in_progress": "взят в работу",
-            "rejected": "отклонен",
-            "closed": "закрыт"
-        }.get(new_status, new_status)
-        
-        emoji = {
-            "open": "🔓",
-            "in_progress": "🛠️",
-            "rejected": "❌",
-            "closed": "🔒"
-        }.get(new_status, "ℹ️")
-        
-        text = (
-            f"{emoji} <b>Инцидент #{incident_id} {status_text}</b>\n"
-            f"👤 Пользователь: {user}\n"
-            f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        
-        # Отправляем уведомление в группу
-        await callback.bot.send_message(
-            chat_id=GROUP_ID,
-            message_thread_id=TOPIC_ID,
-            text=text,
-            parse_mode="HTML"
-        )
-        
-        await callback.answer(f"Статус изменен на: {status_text}")
-        await callback.message.edit_reply_markup(
-            reply_markup=generate_incident_buttons(int(incident_id), new_status)
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка изменения статуса инцидента #{incident_id}: {e}")
-        await callback.answer("❌ Ошибка обновления статуса")
-
-# Функция генерации кнопок (вынесена для повторного использования)
-def generate_incident_buttons(incident_id: int, current_status: str = "open") -> InlineKeyboardMarkup:
-    buttons = []
+    logger.info(f"Пользователь {user} начал переназначение инцидента #{incident_id}")
     
-    if current_status == "open":
-        buttons.append([
-            InlineKeyboardButton(text="Взять в работу", callback_data=f"take_{incident_id}"),
-            InlineKeyboardButton(text="Отклонить", callback_data=f"reject_{incident_id}")
-        ])
-    elif current_status == "in_progress":
-        buttons.append([
-            InlineKeyboardButton(text="Закрыть", callback_data=f"close_{incident_id}"),
-            InlineKeyboardButton(text="Вернуть в открытые", callback_data=f"status_{incident_id}_open")
-        ])
-    elif current_status == "rejected":
-        buttons.append([
-            InlineKeyboardButton(text="Вернуть в открытые", callback_data=f"status_{incident_id}_open")
-        ])
-    elif current_status == "closed":
-        buttons.append([
-            InlineKeyboardButton(text="Переоткрыть", callback_data=f"status_{incident_id}_open")
-        ])
+    await state.update_data(
+        action="reassign", 
+        incident_id=incident_id,
+        original_message_id=callback.message.message_id
+    )
     
-    buttons.append([
-        InlineKeyboardButton(text="История статусов", callback_data=f"history_{incident_id}")
+    # В реальной системе здесь можно получить список пользователей из БД
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Назначить на меня", callback_data=f"selfassign_{incident_id}")],
+        [InlineKeyboardButton(text="Отмена", callback_data="cancel_reassign")]
     ])
     
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.message.answer(
+        "👥 Укажите пользователя для переназначения (в формате @username):",
+        reply_markup=keyboard
+    )
+    await IncidentStates.waiting_for_reassign.set()
+    await callback.answer()
 
-# Остальные обработчики остаются без изменений, но добавляем вызов create_incident
-# ... [ваш существующий код take_in_work, reject_incident, close_incident] ...
+@router.callback_query(F.data.startswith("selfassign_"))
+async def self_assign_incident(callback: CallbackQuery, state: FSMContext, db: Database):
+    incident_id = int(callback.data.split("_")[1])
+    user = callback.from_user.username or callback.from_user.full_name
+    user_id = callback.from_user.id
+    
+    logger.info(f"Пользователь {user} (ID: {user_id}) назначил себя на инцидент #{incident_id}")
+    
+    # Обновляем ответственного
+    await db.update_incident(
+        incident_id=incident_id,
+        assigned_to=f"{user} (ID: {user_id})"
+    )
+    
+    # Обновляем оригинальное сообщение
+    incident = await db.get_incident(incident_id)
+    text = format_incident_message(incident)
+    keyboard = await get_incident_keyboard(incident_id, db)
+    
+    await callback.bot.edit_message_text(
+        chat_id=GROUP_ID,
+        message_id=callback.message.message_id - 1,  # Предполагаем, что оригинальное сообщение на 1 выше
+        text=text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+    
+    await callback.message.answer(f"✅ Вы назначены ответственным за инцидент #{incident_id}")
+    await state.clear()
+    await callback.answer()
 
-# Модифицируем обработчик комментариев
+@router.message(StateFilter(IncidentStates.waiting_for_reassign))
+async def process_reassign(message: Message, state: FSMContext, db: Database):
+    data = await state.get_data()
+    incident_id = data.get("incident_id")
+    username = message.text.strip()
+    
+    if not username.startswith("@"):
+        await message.answer("❌ Неверный формат. Укажите пользователя в формате @username")
+        return
+    
+    logger.info(f"Переназначение инцидента #{incident_id} на {username}")
+    
+    # Обновляем ответственного
+    await db.update_incident(
+        incident_id=incident_id,
+        assigned_to=username
+    )
+    
+    # Обновляем оригинальное сообщение
+    incident = await db.get_incident(incident_id)
+    text = format_incident_message(incident)
+    keyboard = await get_incident_keyboard(incident_id, db)
+    
+    await message.bot.edit_message_text(
+        chat_id=GROUP_ID,
+        message_id=data.get("original_message_id"),
+        text=text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+    
+    await message.answer(f"✅ Инцидент #{incident_id} переназначен на {username}")
+    await state.clear()
+
 @router.message(StateFilter(IncidentStates.waiting_for_comment))
 async def process_comment(message: Message, state: FSMContext, db: Database):
     data = await state.get_data()
@@ -113,12 +180,10 @@ async def process_comment(message: Message, state: FSMContext, db: Database):
 
     try:
         new_status = ""
-        emoji = ""
         action_text = ""
         
         if action == "take":
             new_status = "in_progress"
-            emoji = "🛠️"
             action_text = "взят в работу"
             await db.update_incident(
                 incident_id=incident_id,
@@ -129,50 +194,42 @@ async def process_comment(message: Message, state: FSMContext, db: Database):
             
         elif action == "reject":
             new_status = "rejected"
-            emoji = "❌"
             action_text = "отклонен"
             await db.update_incident(
                 incident_id=incident_id,
                 status=new_status,
                 closed_by=f"{username} (ID: {user_id})",
+                closed_at=datetime.now(),
                 comment=comment
             )
             
         elif action == "close":
             new_status = "closed"
-            emoji = "🔒"
             action_text = "закрыт"
             await db.update_incident(
                 incident_id=incident_id,
                 status=new_status,
                 closed_by=f"{username} (ID: {user_id})",
+                closed_at=datetime.now(),
                 comment=comment
             )
         
-        text = (
-            f"{emoji} <b>Инцидент #{incident_id} {action_text}</b>\n"
-            f"👤 Пользователь: {username}\n"
-            f"📝 Комментарий: {comment}\n"
-            f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        # Получаем обновленные данные инцидента
+        incident = await db.get_incident(incident_id)
+        text = format_incident_message(incident)
+        keyboard = await get_incident_keyboard(incident_id, db)
         
         # Обновляем оригинальное сообщение
-        await message.bot.edit_message_reply_markup(
+        await message.bot.edit_message_text(
             chat_id=GROUP_ID,
             message_id=original_message_id,
-            message_thread_id=TOPIC_ID,
-            reply_markup=generate_incident_buttons(incident_id, new_status)
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
 
-        # Отправляем уведомление в группу
-        await message.bot.send_message(
-            chat_id=GROUP_ID,
-            message_thread_id=TOPIC_ID,
-            text=text,
-            parse_mode="HTML"
-        )
-        
-        await message.answer("✔️ Действие успешно выполнено!")
+        # Отправляем уведомление о выполнении действия
+        await message.answer(f"✅ Инцидент #{incident_id} {action_text}!")
         logger.info(f"Инцидент #{incident_id} обработан: действие={action}, пользователь={username}")
 
     except Exception as e:

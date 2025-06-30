@@ -32,7 +32,10 @@ class Application:
             if not await self.db.connect(DB_DSN):
                 raise RuntimeError("Database connection failed")
             
-            # Запуск Telegram бота в отдельной задаче
+            # Сохраняем базу данных в состоянии приложения FastAPI
+            app.state.db = self.db
+            
+            # Запуск Telegram бота
             self.tasks.append(asyncio.create_task(self.run_bot()))
             
             # Запуск API сервера
@@ -57,9 +60,13 @@ class Application:
 
             self.dp['db'] = self.db
 
-            self.dp.include_router(commands.router)
-            self.dp.include_router(fsm_handlers.router)
-            self.dp.include_router(unknown.router)
+            # Подключаем все обработчики
+            self.dp.include_router(commands.router)  # commands.router - экземпляр
+            self.dp.include_router(fsm_handlers.router)  # fsm_handlers.router - экземпляр
+            self.dp.include_router(unknown.router)  # unknown.router - экземпляр
+            print(f"commands.router type: {type(commands.router)}")
+            print(f"fsm_handlers.router type: {type(fsm_handlers.router)}")
+            print(f"unknown.router type: {type(unknown.router)}")
 
             logger.info("Telegram bot started and ready")
             await self.dp.start_polling(self.bot)
@@ -101,11 +108,6 @@ class Application:
         if self.bot:
             await self.bot.session.close()
             logger.info("Telegram bot stopped")
-        
-        # Останавливаем сервер API
-        if self.server:
-            self.server.should_exit = True
-            logger.info("API server stopped")
         
         # Закрываем соединение с БД
         if self.db and self.db.pool:

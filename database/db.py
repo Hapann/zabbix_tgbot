@@ -1,8 +1,12 @@
+from datetime import datetime
 import asyncpg
 import logging
 from database.queries import (
     CREATE_TABLE_INCIDENTS,
-    INSERT_INCIDENT
+    INSERT_INCIDENT,
+    UPDATE_STATUS,
+    CLOSE_INCIDENT,
+    REJECT_INCIDENT
 )
 from logger.logger import logger
 
@@ -66,46 +70,63 @@ class Database:
             logger.error(f"Error creating incident: {e}")
             return -1
 
-    async def update_incident_status(self, incident_id: int, status: str, user: str, comment: str) -> bool:
-        """Обновление статуса инцидента"""
-        try:
-            async with self.pool.acquire() as conn:
-                if status == "closed":
-                    await conn.execute(
-                        CLOSE_INCIDENT,
-                        user,
-                        comment,
-                        incident_id
-                    )
-                elif status == "rejected":
-                    await conn.execute(
-                        REJECT_INCIDENT,
-                        user,
-                        comment,
-                        incident_id
-                    )
-                else:
-                    await conn.execute(
-                        UPDATE_STATUS,
-                        status,
-                        user,
-                        comment,
-                        incident_id
-                    )
-                logger.info(f"Updated incident #{incident_id} to {status}")
-                return True
-        except asyncpg.PostgresError as e:
-            logger.error(f"Error updating incident #{incident_id}: {e}")
-            return False
-
     async def get_incident(self, incident_id: int) -> dict:
         """Получение данных об инциденте"""
         try:
             async with self.pool.acquire() as conn:
-                return await conn.fetchrow(
+                row = await conn.fetchrow(
                     "SELECT * FROM incidents WHERE id = $1",
                     incident_id
                 )
+                if row:
+                    return dict(row)
+                return None
         except asyncpg.PostgresError as e:
             logger.error(f"Error getting incident #{incident_id}: {e}")
             return None
+
+    async def update_incident(
+        self,
+        incident_id: int,
+        status: str = None,
+        assigned_to: str = None,
+        closed_by: str = None,
+        closed_at: datetime = None,
+        comment: str = None
+    ) -> bool:
+        """Обновление данных инцидента"""
+        try:
+            async with self.pool.acquire() as conn:
+                query = "UPDATE incidents SET "
+                params = []
+                updates = []
+                
+                if status:
+                    updates.append("status = $1")
+                    params.append(status)
+                if assigned_to:
+                    updates.append("assigned_to = $2")
+                    params.append(assigned_to)
+                if closed_by:
+                    updates.append("closed_by = $3")
+                    params.append(closed_by)
+                if closed_at:
+                    updates.append("closed_at = $4")
+                    params.append(closed_at)
+                if comment:
+                    updates.append("comment = $5")
+                    params.append(comment)
+                
+                if not updates:
+                    return False
+                
+                query += ", ".join(updates)
+                query += ", updated_at = NOW() WHERE id = $6"
+                params.append(incident_id)
+                
+                await conn.execute(query, *params)
+                logger.info(f"Updated incident #{incident_id}")
+                return True
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error updating incident #{incident_id}: {e}")
+            return False

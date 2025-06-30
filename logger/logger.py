@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 # Уровень логирования можно легко менять в одном месте
-LOG_LEVEL = logging.INFO
+LOG_LEVEL = logging.DEBUG
 
 def setup_logger():
     logger = logging.getLogger("zabbix_bot")
