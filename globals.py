@@ -1,16 +1,19 @@
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
 
 load_dotenv()
 
-#Bot info
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID"))
-TOPIC_ID = int(os.getenv("TOPIC_ID"))
+GROUP_ID = os.getenv("GROUP_ID")
+TOPIC_ID = os.getenv("TOPIC_ID")
+DB_DSN = os.getenv("DATABASE_URL")
 
-#Database info
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", 5432))
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
+# Проверка обязательных переменных
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is not set in .env file")
+
+if not GROUP_ID:
+    raise ValueError("GROUP_ID is not set in .env file")
+
+if not DB_DSN:
+    raise ValueError("DATABASE_URL is not set in .env file")
