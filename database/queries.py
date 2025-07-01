@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     assigned_to TEXT,
     closed_by TEXT,
     closed_at TIMESTAMP,
-    comments TEXT[]
+    comment TEXT  -- ИЗМЕНЕНО: TEXT вместо TEXT[]
 );
 """
 
@@ -24,18 +24,32 @@ RETURNING id;
 
 UPDATE_STATUS = """
 UPDATE incidents
-SET status = $1, updated_at = NOW(), assigned_to = $2, comments = array_append(comments, $3)
-WHERE id = $4;
+SET status = $1,
+    updated_at = NOW(),
+    assigned_to = $2,
+    comment = COALESCE(comment, '') || '\n' || $3
+WHERE id = $4
+RETURNING id;
 """
 
 CLOSE_INCIDENT = """
 UPDATE incidents
-SET status = 'closed', closed_by = $1, closed_at = NOW(), comments = array_append(comments, $2), updated_at = NOW()
-WHERE id = $3;
+SET status = 'closed',
+    closed_by = $1,
+    closed_at = NOW(),
+    comment = COALESCE(comment, '') || '\n' || $2,
+    updated_at = NOW()
+WHERE id = $3
+RETURNING id; 
 """
 
 REJECT_INCIDENT = """
 UPDATE incidents
-SET status = 'rejected', closed_by = $1, closed_at = NOW(), comments = array_append(comments, $2), updated_at = NOW()
-WHERE id = $3;
+SET status = 'rejected',
+    closed_by = $1,
+    closed_at = NOW(),
+    comment = COALESCE(comment, '') || '\n' || $2,
+    updated_at = NOW()
+WHERE id = $3
+RETURNING id;  
 """

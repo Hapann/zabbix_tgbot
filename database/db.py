@@ -13,7 +13,7 @@ from logger.logger import logger
 class Database:
     def __init__(self):
         self.pool = None
-        
+
     async def connect(self, dsn: str):
         """Установка соединения с базой данных"""
         try:
@@ -27,27 +27,26 @@ class Database:
             await self._init_db()
             return True
         except Exception as e:
-            logger.error(f"Database connection error: {e}")
+            logger.error(f"Database connection error: {e}", exc_info=True)
             return False
-            
+
     async def _init_db(self):
         """Инициализация структуры базы данных"""
         async with self.pool.acquire() as conn:
             try:
-                # Проверяем существование таблицы incidents
                 table_exists = await conn.fetchval(
                     "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'incidents')"
                 )
-                
+
                 if not table_exists:
                     logger.info("Creating database tables...")
                     await conn.execute(CREATE_TABLE_INCIDENTS)
                     logger.info("Database tables created")
                 else:
                     logger.info("Database tables already exist")
-                    
+
             except Exception as e:
-                logger.error(f"Database initialization error: {e}")
+                logger.error(f"Database initialization error: {e}", exc_info=True)
                 raise
 
     async def create_incident(self, data: dict) -> int:
@@ -67,7 +66,12 @@ class Database:
                 logger.info(f"Created incident ID: {incident_id}")
                 return incident_id
         except asyncpg.PostgresError as e:
-            logger.error(f"Error creating incident: {e}")
+            logger.error(
+                f"Error creating incident: {e}\n"
+                f"Query: {INSERT_INCIDENT}\n"
+                f"Params: {data}",
+                exc_info=True
+            )
             return -1
 
     async def get_incident(self, incident_id: int) -> dict:
@@ -80,9 +84,14 @@ class Database:
                 )
                 if row:
                     return dict(row)
+                logger.warning(f"Incidient #{incident_id} not found")
                 return None
         except asyncpg.PostgresError as e:
-            logger.error(f"Error getting incident #{incident_id}: {e}")
+            logger.error(
+                f"Error getting incident #{incident_id}: {e}\n"
+                f"Query: SELECT * FROM incidents WHERE id = $1",
+                exc_info=True
+            )
             return None
 
     async def update_incident(
@@ -100,33 +109,49 @@ class Database:
                 query = "UPDATE incidents SET "
                 params = []
                 updates = []
-                
-                if status:
-                    updates.append("status = $1")
+                index = 1
+
+                if status is not None:
+                    updates.append(f"status = ${index}")
                     params.append(status)
-                if assigned_to:
-                    updates.append("assigned_to = $2")
+                    index += 1
+                if assigned_to is not None:
+                    updates.append(f"assigned_to = ${index}")
                     params.append(assigned_to)
-                if closed_by:
-                    updates.append("closed_by = $3")
+                    index += 1
+                if closed_by is not None:
+                    updates.append(f"closed_by = ${index}")
                     params.append(closed_by)
-                if closed_at:
-                    updates.append("closed_at = $4")
+                    index += 1
+                if closed_at is not None:
+                    updates.append(f"closed_at = ${index}")
                     params.append(closed_at)
-                if comment:
-                    updates.append("comment = $5")
+                    index += 1
+                if comment is not None:
+                    updates.append(f"comment = ${index}")
                     params.append(comment)
-                
+                    index += 1
+
                 if not updates:
+                    logger.warning(f"No updates provided for incident #{incident_id}")
                     return False
-                
+
                 query += ", ".join(updates)
-                query += ", updated_at = NOW() WHERE id = $6"
+                query += f", updated_at = NOW() WHERE id = ${index}"
                 params.append(incident_id)
-                
-                await conn.execute(query, *params)
+
+                result = await conn.execute(query, *params)
+                if "UPDATE 1" not in result:
+                    logger.error(f"Update failed for incident #{incident_id}")
+                    return False
+                    
                 logger.info(f"Updated incident #{incident_id}")
                 return True
         except asyncpg.PostgresError as e:
-            logger.error(f"Error updating incident #{incident_id}: {e}")
+            logger.error(
+                f"Error updating incident #{incident_id}: {e}\n"
+                f"Query: {query}\n"
+                f"Params: {params}",
+                exc_info=True
+            )
             return False
