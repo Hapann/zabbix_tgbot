@@ -13,34 +13,59 @@ def format_incident_message(incident: dict) -> str:
         'closed': '🔒'
     }.get(incident['status'], 'ℹ️')
     
+    # Время создания (UTC-0)
+    created_time_utc = incident['created_at']
+    if created_time_utc.tzinfo is None:
+        created_time_utc = created_time_utc.replace(tzinfo=timezone.utc)
+    
+    # Время закрытия (UTC-0), если есть
+    closed_time_utc = None
+    if incident.get('closed_at'):
+        closed_time_utc = incident['closed_at']
+        if closed_time_utc.tzinfo is None:
+            closed_time_utc = closed_time_utc.replace(tzinfo=timezone.utc)
+
+    # Форматируем время создания (UTC-0)
+    created_time_str = created_time_utc.strftime('%Y-%m-%d %H:%M:%S UTC-0')
+
     text = (
-        f"{emoji} <b>Инцидент #{incident['id']}</b>\n"
+        f"{emoji} <b>Инцидент №{incident['id']}</b>\n"
         f"🔹 <b>Событие:</b> {incident['event']}\n"
         f"🌐 <b>На узле:</b> {incident['node']}\n"
         f"⚠️ <b>Триггер:</b> {incident['trigger']}\n"
         f"🔄 <b>Состояние:</b> {status_display}\n"
         f"🔴 <b>Уровень критичности:</b> {incident['severity']}\n"
         f"📄 <b>Подробности:</b> {incident['details']}\n"
-        f"🕒 <b>Время создания:</b> {incident['created_at'].strftime('%Y-%m-%d %H:%M:%S')}"
+        f"🕒 <b>Время создания:</b> {created_time_str}"
     )
+
+    # Добавляем информацию о взятии в работу, если есть
+    if incident.get('assigned_to_username') and incident['status'] == 'in_progress':
+        text += f"\n👤 <b>В работе у:</b> {incident['assigned_to_username']}"
+
+    # Добавляем информацию о закрытии (UTC-0)
+    if closed_time_utc:
+        closed_time_str = closed_time_utc.strftime('%Y-%m-%d %H:%M:%S UTC-0')
+        text += f"\n🔒 <b>Закрыл:</b> {incident['closed_by_username']}"
+        text += f"\n🕒 <b>Время закрытия:</b> {closed_time_str}"
+        
+        # Расчёт длительности (UTC-0)
+        duration = closed_time_utc - created_time_utc
+        total_seconds = duration.total_seconds()
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        seconds = int(total_seconds % 60)
+        
+        # Форматируем вывод в зависимости от длительности
+        if hours > 0:
+            text += f"\n⏱️ <b>Время решения:</b> {hours}ч {minutes}м"
+        elif minutes > 0:
+            text += f"\n⏱️ <b>Время решения:</b> {minutes}м {seconds}с"
+        else:
+            text += f"\n⏱️ <b>Время решения:</b> {seconds}с"
     
-    # Добавляем информацию об ответственном, если есть
-    if incident.get('assigned_to'):
-        text += f"\n👤 <b>Ответственный:</b> {incident['assigned_to']}"
-        
-    # Добавляем информацию о закрытии, если есть
-    if incident.get('closed_by'):
-        text += f"\n🔒 <b>Закрыл:</b> {incident['closed_by']}"
-        
-    # Добавляем время решения, если есть
-    if incident.get('closed_at'):
-        duration = (incident['closed_at'] - incident['created_at'])
-        hours, remainder = divmod(duration.total_seconds(), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        text += f"\n⏱️ <b>Время решения:</b> {int(hours)}ч {int(minutes)}м"
-        
     # Добавляем комментарий, если есть
     if incident.get('comment'):
         text += f"\n💬 <b>Комментарий:</b> {incident['comment']}"
-        
+    
     return text

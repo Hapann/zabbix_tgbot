@@ -32,7 +32,11 @@ async def receive_alert(alert: ZabbixAlert, request: Request):
             "trigger": alert.trigger,
             "severity": alert.severity,
             "details": alert.details,
-            "status": "open"
+            "status": "open",
+            "assigned_to_username": None,
+            "assigned_to_user_id": None,
+            "closed_by_username": None,
+            "closed_by_user_id": None
         })
         
         if incident_id == -1:
@@ -46,14 +50,14 @@ async def receive_alert(alert: ZabbixAlert, request: Request):
         keyboard = await get_incident_keyboard(incident_id, db)
 
         # Отправка в Telegram
-        bot = Bot(token=BOT_TOKEN)
-        message = await bot.send_message(
-            chat_id=GROUP_ID,
-            message_thread_id=int(TOPIC_ID),
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        async with Bot(token=BOT_TOKEN) as bot:
+            message = await bot.send_message(
+                chat_id=GROUP_ID,
+                message_thread_id=int(TOPIC_ID),
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
          
         return {"status": "success", "message_id": message.message_id}
     

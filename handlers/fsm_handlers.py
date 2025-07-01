@@ -10,6 +10,7 @@ from globals import GROUP_ID, TOPIC_ID
 from datetime import datetime
 from utils.messages import format_incident_message
 from utils.keyboards import get_incident_keyboard
+from datetime import datetime, timezone
 
 router = Router()
 
@@ -47,17 +48,18 @@ async def safe_edit_message(
 async def take_in_work(callback: CallbackQuery, state: FSMContext):
     try:
         incident_id = int(callback.data.split("_")[1])
-        user = callback.from_user.username or callback.from_user.full_name
-        user_id = callback.from_user.id
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        user_id = user.id
 
-        logger.info(f"User {user} (ID: {user_id}) started taking incident #{incident_id}")
+        logger.info(f"User {username} (ID: {user_id}) started taking incident #{incident_id}")
 
         await state.update_data(
             action="take",
             incident_id=incident_id,
             original_message_id=callback.message.message_id,
             user_id=user_id,
-            username=user
+            username=username
         )
 
         await callback.message.answer("✍️ Please enter a comment for taking the incident:")
@@ -71,17 +73,18 @@ async def take_in_work(callback: CallbackQuery, state: FSMContext):
 async def reject_incident(callback: CallbackQuery, state: FSMContext, db: Database):
     try:
         incident_id = int(callback.data.split("_")[1])
-        user = callback.from_user.username or callback.from_user.full_name
-        user_id = callback.from_user.id
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        user_id = user.id
 
-        logger.info(f"User {user} (ID: {user_id}) started rejecting incident #{incident_id}")
+        logger.info(f"User {username} (ID: {user_id}) started rejecting incident #{incident_id}")
 
         await state.update_data(
             action="reject",
             incident_id=incident_id,
             original_message_id=callback.message.message_id,
             user_id=user_id,
-            username=user
+            username=username
         )
         await callback.message.answer("✍️ Please enter a comment for rejecting the incident:")
         await state.set_state(IncidentStates.waiting_for_comment)
@@ -94,17 +97,18 @@ async def reject_incident(callback: CallbackQuery, state: FSMContext, db: Databa
 async def close_incident(callback: CallbackQuery, state: FSMContext, db: Database):
     try:
         incident_id = int(callback.data.split("_")[1])
-        user = callback.from_user.username or callback.from_user.full_name
-        user_id = callback.from_user.id
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        user_id = user.id
 
-        logger.info(f"User {user} (ID: {user_id}) started closing incident #{incident_id}")
+        logger.info(f"User {username} (ID: {user_id}) started closing incident #{incident_id}")
 
         await state.update_data(
             action="close",
             incident_id=incident_id,
             original_message_id=callback.message.message_id,
             user_id=user_id,
-            username=user
+            username=username
         )
         await callback.message.answer("✍️ Please enter a comment for closing the incident:")
         await state.set_state(IncidentStates.waiting_for_comment)
@@ -117,9 +121,10 @@ async def close_incident(callback: CallbackQuery, state: FSMContext, db: Databas
 async def reassign_incident(callback: CallbackQuery, state: FSMContext, db: Database):
     try:
         incident_id = int(callback.data.split("_")[1])
-        user = callback.from_user.username or callback.from_user.full_name
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
 
-        logger.info(f"User {user} started reassigning incident #{incident_id}")
+        logger.info(f"User {username} started reassigning incident #{incident_id}")
 
         await state.update_data(
             action="reassign",
@@ -146,14 +151,16 @@ async def reassign_incident(callback: CallbackQuery, state: FSMContext, db: Data
 async def self_assign_incident(callback: CallbackQuery, state: FSMContext, db: Database):
     try:
         incident_id = int(callback.data.split("_")[1])
-        user = callback.from_user.username or callback.from_user.full_name
-        user_id = callback.from_user.id
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        user_id = user.id
 
-        logger.info(f"User {user} (ID: {user_id}) self-assigned to incident #{incident_id}")
+        logger.info(f"User {username} (ID: {user_id}) self-assigned to incident #{incident_id}")
 
         success = await db.update_incident(
             incident_id=incident_id,
-            assigned_to=f"{user} (ID: {user_id})"
+            assigned_to_username=username,
+            assigned_to_user_id=user_id
         )
 
         if not success:
@@ -204,7 +211,8 @@ async def process_reassign(message: Message, state: FSMContext, db: Database):
 
         success = await db.update_incident(
             incident_id=incident_id,
-            assigned_to=username
+            assigned_to_username=username,
+            assigned_to_user_id=None  # User ID unknown for manual assignment
         )
 
         if not success:
@@ -254,21 +262,24 @@ async def process_comment(message: Message, state: FSMContext, db: Database):
         if action == "take":
             update_data = {
                 "status": "in_progress",
-                "assigned_to": f"{username} (ID: {user_id})",
+                "assigned_to_username": username,
+                "assigned_to_user_id": user_id,
                 "comment": comment
             }
         elif action == "reject":
             update_data = {
                 "status": "rejected",
-                "closed_by": f"{username} (ID: {user_id})",
-                "closed_at": datetime.now(),
+                "closed_by_username": username,
+                "closed_by_user_id": user_id,
+                "closed_at": datetime.now(timezone.utc),
                 "comment": comment
             }
         elif action == "close":
             update_data = {
                 "status": "closed",
-                "closed_by": f"{username} (ID: {user_id})",
-                "closed_at": datetime.now(),
+                "closed_by_username": username,
+                "closed_by_user_id": user_id,
+                "closed_at": datetime.now(timezone.utc),  
                 "comment": comment
             }
 

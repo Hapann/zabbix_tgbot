@@ -1,6 +1,5 @@
 from datetime import datetime
 import asyncpg
-import logging
 from database.queries import (
     CREATE_TABLE_INCIDENTS,
     INSERT_INCIDENT,
@@ -37,14 +36,12 @@ class Database:
                 table_exists = await conn.fetchval(
                     "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'incidents')"
                 )
-
                 if not table_exists:
                     logger.info("Creating database tables...")
                     await conn.execute(CREATE_TABLE_INCIDENTS)
                     logger.info("Database tables created")
                 else:
                     logger.info("Database tables already exist")
-
             except Exception as e:
                 logger.error(f"Database initialization error: {e}", exc_info=True)
                 raise
@@ -60,7 +57,11 @@ class Database:
                     data["trigger"],
                     data.get("status", "open"),
                     data["severity"],
-                    data.get("details", "")
+                    data.get("details", ""),
+                    data.get("assigned_to_username"),
+                    data.get("assigned_to_user_id"),
+                    data.get("closed_by_username"),
+                    data.get("closed_by_user_id")
                 )
                 incident_id = result["id"]
                 logger.info(f"Created incident ID: {incident_id}")
@@ -84,7 +85,7 @@ class Database:
                 )
                 if row:
                     return dict(row)
-                logger.warning(f"Incidient #{incident_id} not found")
+                logger.warning(f"Incident #{incident_id} not found")
                 return None
         except asyncpg.PostgresError as e:
             logger.error(
@@ -98,8 +99,10 @@ class Database:
         self,
         incident_id: int,
         status: str = None,
-        assigned_to: str = None,
-        closed_by: str = None,
+        assigned_to_username: str = None,
+        assigned_to_user_id: int = None,
+        closed_by_username: str = None,
+        closed_by_user_id: int = None,
         closed_at: datetime = None,
         comment: str = None
     ) -> bool:
@@ -115,13 +118,21 @@ class Database:
                     updates.append(f"status = ${index}")
                     params.append(status)
                     index += 1
-                if assigned_to is not None:
-                    updates.append(f"assigned_to = ${index}")
-                    params.append(assigned_to)
+                if assigned_to_username is not None:
+                    updates.append(f"assigned_to_username = ${index}")
+                    params.append(assigned_to_username)
                     index += 1
-                if closed_by is not None:
-                    updates.append(f"closed_by = ${index}")
-                    params.append(closed_by)
+                if assigned_to_user_id is not None:
+                    updates.append(f"assigned_to_user_id = ${index}")
+                    params.append(assigned_to_user_id)
+                    index += 1
+                if closed_by_username is not None:
+                    updates.append(f"closed_by_username = ${index}")
+                    params.append(closed_by_username)
+                    index += 1
+                if closed_by_user_id is not None:
+                    updates.append(f"closed_by_user_id = ${index}")
+                    params.append(closed_by_user_id)
                     index += 1
                 if closed_at is not None:
                     updates.append(f"closed_at = ${index}")
@@ -144,7 +155,7 @@ class Database:
                 if "UPDATE 1" not in result:
                     logger.error(f"Update failed for incident #{incident_id}")
                     return False
-                    
+
                 logger.info(f"Updated incident #{incident_id}")
                 return True
         except asyncpg.PostgresError as e:
