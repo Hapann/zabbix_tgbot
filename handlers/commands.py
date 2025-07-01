@@ -83,7 +83,21 @@ async def active_incidents_handler(message: Message, db: Database):
         response = "🚨 Активные инциденты:\n\n"
         for incident in incidents:
             incident_dict = dict(incident)
-            response += f"• #{incident_dict['id']} - {incident_dict['event']} ({incident_dict['status']})\n"
+            
+            # Формируем информацию о назначенном пользователе
+            assigned_info = f" - {incident_dict['assigned_to_username']}" if incident_dict['assigned_to_username'] else ""
+            
+            # Формируем ссылку на инцидент
+            if incident_dict.get('message_id'):
+                chat_id = str(GROUP_ID).replace('-100', '')
+                incident_link = f"https://t.me/c/{chat_id}/{incident_dict['message_id']}"
+            else:
+                incident_link = f"(ID: #{incident_dict['id']})"
+            
+            response += (
+                f"• #{incident_dict['id']} - {incident_dict['event']} "
+                f"({incident_dict['status']}){assigned_info} - {incident_link}\n"
+            )
         
         await message.answer(response)
     except Exception as e:

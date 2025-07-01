@@ -1,16 +1,16 @@
-version: "3.9"
+version: '3.8'
 
 services:
-  bot:
+  zabbix-bot:
     build: .
+    container_name: zabbix-bot
+    restart: unless-stopped
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASS}
-      - CHAT_ID=${CHAT_ID}
+      - GROUP_ID=${GROUP_ID}
+      - TOPIC_ID=${TOPIC_ID}
+      - DATABASE_URL=${DATABASE_URL}
+    ports:
+      - "7000:7000"
     volumes:
-      - .:/app
-    restart: unless-stopped
+      - ./logs:/app/logs  # Прокидываем папку с логами

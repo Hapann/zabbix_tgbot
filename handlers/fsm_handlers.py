@@ -313,8 +313,57 @@ async def process_comment(message: Message, state: FSMContext, db: Database):
         await message.answer(f"✅ Incident #{incident_id} {action_text}!")
         logger.info(f"Incedent #{incident_id} processed: action={action}, user={username}")
 
+
+
     except Exception as e:
         logger.error(f"Error processing comment: {e}", exc_info=True)
         await message.answer("❌ An error occurred while processing your request")
     finally:
         await state.clear()
+
+@router.callback_query(F.data.startswith("reopen_"))
+async def reopen_incident(callback: CallbackQuery, state: FSMContext, db: Database):
+    try:
+        incident_id = int(callback.data.split("_")[1])
+        user = callback.from_user
+        username = f"@{user.username}" if user.username else user.full_name
+        user_id = user.id
+
+        logger.info(f"User {username} (ID: {user_id}) reopening incident #{incident_id}")
+
+        # Обновляем статус инцидента на "open"
+        success = await db.update_incident(
+            incident_id=incident_id,
+            status="open",
+            assigned_to_username=None,
+            assigned_to_user_id=None,
+            closed_by_username=None,
+            closed_by_user_id=None,
+            closed_at=None,
+            comment=None
+        )
+
+        if not success:
+            await callback.answer("❌ Failed to reopen incident")
+            return
+
+        incident = await db.get_incident(incident_id)
+        if not incident:
+            await callback.answer("❌ Incident not found")
+            return
+
+        text = format_incident_message(incident)
+        keyboard = await get_incident_keyboard(incident_id, db)
+
+        await safe_edit_message(
+            callback.bot,
+            GROUP_ID,
+            callback.message.message_id,
+            text,
+            keyboard
+        )
+
+        await callback.answer(f"✅ Incident #{incident_id} reopened")
+    except Exception as e:
+        logger.error(f"Error in reopen_incident: {e}", exc_info=True)
+        await callback.answer("An error occurred, please try later")

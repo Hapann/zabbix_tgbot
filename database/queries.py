@@ -1,5 +1,5 @@
 CREATE_TABLE_INCIDENTS = """
-CREATE TABLE IF NOT EXISTS incidents (
+CREATE TABLE IF NOT EXISTS public.incidents (
     id SERIAL PRIMARY KEY,
     event TEXT NOT NULL,
     node TEXT NOT NULL,
@@ -14,12 +14,13 @@ CREATE TABLE IF NOT EXISTS incidents (
     closed_by_username TEXT,
     closed_by_user_id INTEGER,
     closed_at TIMESTAMP WITH TIME ZONE,
-    comment TEXT
+    comment TEXT,
+    message_id BIGINT
 );
 """
 
 INSERT_INCIDENT = """
-INSERT INTO incidents (
+INSERT INTO public.incidents (
     event, 
     node, 
     trigger, 
@@ -29,9 +30,10 @@ INSERT INTO incidents (
     assigned_to_username,
     assigned_to_user_id,
     closed_by_username,
-    closed_by_user_id
+    closed_by_user_id,
+    message_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id;
 """
 
@@ -41,7 +43,8 @@ SET status = $1,
     updated_at = NOW(),
     assigned_to_username = $2,
     assigned_to_user_id = $3,
-    comment = COALESCE(comment, '') || '\n' || $4
+    comment = COALESCE(comment, '') || '\n' || $4,
+    message_id = COALESCE($6, message_id)  -- Обновляем message_id, если передан
 WHERE id = $5
 RETURNING id;
 """
@@ -53,7 +56,8 @@ SET status = 'closed',
     closed_by_user_id = $2,
     closed_at = NOW(),
     comment = COALESCE(comment, '') || '\n' || $3,
-    updated_at = NOW()
+    updated_at = NOW(),
+    message_id = COALESCE($5, message_id)  -- Обновляем message_id, если передан
 WHERE id = $4
 RETURNING id; 
 """
@@ -65,7 +69,8 @@ SET status = 'rejected',
     closed_by_user_id = $2,
     closed_at = NOW(),
     comment = COALESCE(comment, '') || '\n' || $3,
-    updated_at = NOW()
+    updated_at = NOW(),
+    message_id = COALESCE($5, message_id)  -- Обновляем message_id, если передан
 WHERE id = $4
 RETURNING id;  
 """

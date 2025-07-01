@@ -33,15 +33,24 @@ class Database:
         """Инициализация структуры базы данных"""
         async with self.pool.acquire() as conn:
             try:
+                # Создаем схему public если она не существует
+                await conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+                
+                # Даем все права на схему public
+                await conn.execute("GRANT ALL ON SCHEMA public TO public")
+                
+                # Проверяем существование таблицы
                 table_exists = await conn.fetchval(
                     "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'incidents')"
                 )
+                
                 if not table_exists:
                     logger.info("Creating database tables...")
                     await conn.execute(CREATE_TABLE_INCIDENTS)
                     logger.info("Database tables created")
                 else:
                     logger.info("Database tables already exist")
+                    
             except Exception as e:
                 logger.error(f"Database initialization error: {e}", exc_info=True)
                 raise
@@ -61,7 +70,8 @@ class Database:
                     data.get("assigned_to_username"),
                     data.get("assigned_to_user_id"),
                     data.get("closed_by_username"),
-                    data.get("closed_by_user_id")
+                    data.get("closed_by_user_id"),
+                    data.get("message_id")  # Добавляем 11-й параметр
                 )
                 incident_id = result["id"]
                 logger.info(f"Created incident ID: {incident_id}")
@@ -104,7 +114,8 @@ class Database:
         closed_by_username: str = None,
         closed_by_user_id: int = None,
         closed_at: datetime = None,
-        comment: str = None
+        comment: str = None,
+        message_id: int = None
     ) -> bool:
         """Обновление данных инцидента"""
         try:
@@ -141,6 +152,10 @@ class Database:
                 if comment is not None:
                     updates.append(f"comment = ${index}")
                     params.append(comment)
+                    index += 1
+                if message_id is not None:
+                    updates.append(f"message_id = ${index}")
+                    params.append(message_id)
                     index += 1
 
                 if not updates:

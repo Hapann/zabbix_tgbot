@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: zabbix-db
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    volumes:
+      - ./dbdata:/var/lib/postgresql/data  # Прокидываем данные БД
+      - ./logs:/app/logs  # Прокидываем папку с логами
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zabbix-bot:
+    build: .
+    container_name: zabbix-bot
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - GROUP_ID=${GROUP_ID}
+      - TOPIC_ID=${TOPIC_ID}
+      - DATABASE_URL=postgres://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./logs:/app/logs  # Прокидываем папку с логами
+
+volumes:
+  dbdata:  # Том для данных БД

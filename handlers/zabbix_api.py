@@ -36,7 +36,8 @@ async def receive_alert(alert: ZabbixAlert, request: Request):
             "assigned_to_username": None,
             "assigned_to_user_id": None,
             "closed_by_username": None,
-            "closed_by_user_id": None
+            "closed_by_user_id": None,
+            "message_id": None  # Будет обновлено после отправки сообщения
         })
         
         if incident_id == -1:
@@ -57,6 +58,12 @@ async def receive_alert(alert: ZabbixAlert, request: Request):
                 text=text,
                 parse_mode="HTML",
                 reply_markup=keyboard
+            )
+            
+            # Сохраняем ID сообщения в базу данных
+            await db.update_incident(
+                incident_id=incident_id,
+                message_id=message.message_id
             )
          
         return {"status": "success", "message_id": message.message_id}
