@@ -1,5 +1,7 @@
 import requests
 import zipfile
+import json
+import subprocess
 from dotenv import load_dotenv
 from aiogram import Router, F
 from aiogram.types import (
@@ -7,7 +9,7 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-import io, os
+import io, os, base64, shutil
 import urllib.parse
 from aiogram.types import FSInputFile
 from aiogram.types import BufferedInputFile
@@ -122,7 +124,27 @@ def download_all_peers_zip(config_name: str):
 
     zip_buffer.seek(0)
     return f"{config_name}_all_peers.zip", zip_buffer.getvalue()
-    
+
+
+def delete_wireguard_config(config_name: str):
+    """Удаляет конфигурацию WireGuard"""
+    payload = {"ConfigurationName": config_name}
+    resp = wg_request("/api/deleteWireguardConfiguration", "POST", payload)
+    return resp.get("status") or False, resp.get("message")
+
+
+def add_wireguard_config(payload: dict):
+    """Создаёт новую конфигурацию WireGuard"""
+    resp = wg_request("/api/addWireguardConfiguration", "POST", payload)
+    return resp.get("status") or False, resp.get("message")
+
+def generate_private_key() -> str:
+    """Генерируем приватный ключ WireGuard через системную утилиту или fallback в Python."""
+    wg_path = shutil.which("wg")
+    if wg_path:
+        return subprocess.check_output([wg_path, "genkey"]).decode().strip()
+    return base64.b64encode(os.urandom(32)).decode()
+
 # ===================================================
 # FSM
 # ===================================================
@@ -132,6 +154,8 @@ class VPNStates(StatesGroup):
     peers_cache = State()
     last_menu_id = State()
 
+class AddConfigStates(StatesGroup):
+    waiting_json = State()
 
 # ===================================================
 # Универсальная безопасная отправка / редактирование
@@ -186,13 +210,17 @@ async def show_interfaces(target, state: FSMContext, force_new=False):
         await _send_or_edit(target, "Нет доступных интерфейсов.", state, force_new=True)
         return
 
-    # светофоры: активен/нет
     inline = []
     for cfg in configs:
         status = "🟢" if cfg.get("Status") else "🔴"
         name = cfg.get("Name", "unknown")
         inline.append([InlineKeyboardButton(text=f"{status} {name}",
                                             callback_data=f"iface:{name}")])
+
+    inline.append([
+        InlineKeyboardButton(text="➕ Добавить конфигурацию",
+                             callback_data="add_config")
+    ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=inline)
     await _send_or_edit(target, "Выбери конфигурацию:", state,
@@ -258,6 +286,11 @@ async def show_peers(message: Message, iface: str, state: FSMContext):
     ])
 
     # нижняя строка управления
+    buttons.append([
+        InlineKeyboardButton(text="🗑 Удалить конфигурацию",
+                             callback_data=f"del_config:{iface}")
+    ])
+
     buttons.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh:{iface}"),
         InlineKeyboardButton(text="➕ Добавить peer", callback_data="peer_add"),
@@ -468,6 +501,40 @@ async def download_all_peers_callback(query: CallbackQuery, state: FSMContext):
 
 
 # ===================================================
+# Удаление интерфейса
+# ===================================================
+@router.callback_query(F.data.startswith("del_config:"))
+async def config_delete_confirm(query: CallbackQuery, state: FSMContext):
+    iface = query.data.split(":", 1)[1]
+    text = f"❗ Вы уверены, что хотите удалить конфигурацию *{iface}* ?"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да", callback_data=f"del_config_yes:{iface}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data=f"iface:{iface}")
+        ]
+    ])
+    await _send_or_edit(query.message, text, state,
+                        parse_mode="Markdown", reply_markup=kb)
+    await query.answer()
+
+
+# ===================================================
+# Подтверждение удаления интерфейса
+# ===================================================
+@router.callback_query(F.data.startswith("del_config_yes:"))
+async def config_delete_yes(query: CallbackQuery, state: FSMContext):
+    iface = query.data.split(":", 1)[1]
+    ok, msg = delete_wireguard_config(iface)
+    if ok:
+        text = f"🗑 Конфигурация *{iface}* успешно удалена."
+    else:
+        text = f"⚠️ Ошибка при удалении *{iface}*:\n```\n{msg or 'Неизвестная ошибка'}\n```"
+    await _send_or_edit(query.message, text, state,
+                        parse_mode="Markdown")
+    await show_interfaces(query.message, state)
+
+
+# ===================================================
 # Переключение интерфейса
 # ===================================================
 @router.callback_query(F.data.startswith("toggle_iface:"))
@@ -486,6 +553,101 @@ async def iface_toggle(query: CallbackQuery, state: FSMContext):
 
     # после переключения обновляем экран
     await show_peers(query.message, iface, state)
+
+
+# ===================================================
+# Добавление конфигурации
+# ===================================================
+@router.callback_query(F.data == "add_config")
+async def add_config_start(query: CallbackQuery, state: FSMContext):
+    example = (
+        "Введите данные новой конфигурации **в формате JSON**:\n"
+        "```\n"
+        "{\n"
+        '  "ConfigurationName": "wg1",\n'
+        '  "Address": "10.70.1.1/24",\n'
+        '  "ListenPort": 51801\n'
+        "}\n"
+        "```"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅ Отменить", callback_data="back_main")]
+    ])
+    await _send_or_edit(query.message, example, state,
+                        parse_mode="Markdown", reply_markup=kb)
+    await state.set_state(AddConfigStates.waiting_json)
+    await query.answer()
+
+
+@router.message(AddConfigStates.waiting_json)
+async def add_config_process(message: Message, state: FSMContext):
+    text = message.text.strip()
+    if text.startswith("```") and text.endswith("```"):
+        text = text.strip("`").strip()
+    try:
+        payload = json.loads(text)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка чтения JSON:\n```\n{e}\n```", parse_mode="Markdown")
+        await show_interfaces(message, state, force_new=True)
+        await state.clear()
+        return
+
+    # ── Добавляем недостающие поля ──
+    if not payload.get("PrivateKey"):
+        try:
+            payload["PrivateKey"] = generate_private_key()
+            await message.answer("🔑 Private key сгенерирован автоматически.")
+        except Exception as e:
+            await message.answer(f"⚠️ Не удалось сгенерировать ключ:\n```\n{e}\n```",
+                                 parse_mode="Markdown")
+            await show_interfaces(message, state, force_new=True)
+            await state.clear()
+            return
+
+    if not payload.get("Protocol"):
+        payload["Protocol"] = "wg"
+
+    # создаём конфигурацию
+    ok, msg = add_wireguard_config(payload)
+    if ok:
+        await message.answer("✅ Конфигурация успешно создана.")
+    else:
+        await message.answer(f"⚠️ Ошибка создания:\n```\n{msg or 'Неизвестная ошибка'}\n```",
+                             parse_mode="Markdown")
+
+    await show_interfaces(message, state, force_new=True)
+    await state.clear()
+
+
+# ===================================================
+# Удаление конфигурации
+# ===================================================
+@router.callback_query(F.data.startswith("del_config:"))
+async def config_delete_confirm(query: CallbackQuery, state: FSMContext):
+    iface = query.data.split(":", 1)[1]
+    text = f"❗ Удалить конфигурацию *{iface}*?"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да", callback_data=f"del_config_yes:{iface}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data=f"iface:{iface}")
+        ]
+    ])
+    await _send_or_edit(query.message, text, state,
+                        parse_mode="Markdown", reply_markup=kb)
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("del_config_yes:"))
+async def config_delete_yes(query: CallbackQuery, state: FSMContext):
+    iface = query.data.split(":", 1)[1]
+    ok, msg = delete_wireguard_config(iface)
+    if ok:
+        text = f"🗑 Конфигурация *{iface}* успешно удалена."
+    else:
+        text = f"⚠️ Ошибка удаления:\n```\n{msg or 'Неизвестная ошибка'}\n```"
+    await _send_or_edit(query.message, text, state, parse_mode="Markdown")
+    await show_interfaces(query.message, state)
+
 
 # ===================================================
 # Обновление и возврат
