@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from aiogram import Bot
 from logger.logger import logger
-from globals import BOT_TOKEN, GROUP_ID, TOPIC_ID
+from globals.config import BOT_TOKEN, GROUP_ID, TOPIC_ID
 from utils.messages import format_incident_message
 from utils.keyboards import get_incident_keyboard
 

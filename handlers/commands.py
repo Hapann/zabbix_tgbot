@@ -5,7 +5,7 @@ from database.db import Database
 from logger.logger import logger
 from utils.messages import format_incident_message
 from utils.keyboards import get_incident_keyboard
-from globals import GROUP_ID, TOPIC_ID
+from globals.config import GROUP_ID, TOPIC_ID
 from datetime import datetime
 
 router = Router()

@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKe
 from aiogram.exceptions import TelegramBadRequest
 from database.db import Database
 from logger.logger import logger
-from globals import GROUP_ID, TOPIC_ID
+from globals.config import GROUP_ID, TOPIC_ID
 from datetime import datetime
 from utils.messages import format_incident_message
 from utils.keyboards import get_incident_keyboard

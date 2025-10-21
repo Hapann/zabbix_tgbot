@@ -9,10 +9,12 @@ from database.db import Database
 from handlers import commands, fsm_handlers, unknown, zabbix_api
 from logger import logger
 from handlers import vpn
-from globals import BOT_TOKEN, DB_DSN
+from globals.config import BOT_TOKEN, DB_DSN
+from middlewares.admin_filter import AdminAccessMiddleware
 
 app = FastAPI()
 app.include_router(zabbix_api.router)
+
 
 class Application:
     def __init__(self):
@@ -26,25 +28,25 @@ class Application:
         """Запуск приложения"""
         try:
             logger.info("Starting application...")
-            
+
             # Инициализация базы данных
             logger.info("Initializing database...")
             self.db = Database()
             if not await self.db.connect(DB_DSN):
                 raise RuntimeError("Database connection failed")
-            
+
             # Сохраняем базу данных в состоянии приложения FastAPI
             app.state.db = self.db
-            
+
             # Запуск Telegram бота
             self.tasks.append(asyncio.create_task(self.run_bot()))
-            
+
             # Запуск API сервера
             self.tasks.append(asyncio.create_task(self.run_api()))
-            
+
             # Ожидаем завершения всех задач
             await asyncio.gather(*self.tasks)
-            
+
         except Exception as e:
             logger.critical(f"Application failed: {str(e)}")
             await self.stop()
@@ -61,15 +63,15 @@ class Application:
 
             self.dp['db'] = self.db
 
+            # 💡 подключаем middleware для ограничения доступа
+            self.dp.message.middleware(AdminAccessMiddleware())
+            self.dp.callback_query.middleware(AdminAccessMiddleware())
+
             # Подключаем все обработчики
-            self.dp.include_router(commands.router)  # commands.router - экземпляр
-            self.dp.include_router(fsm_handlers.router)  # fsm_handlers.router - экземпляр
-            self.dp.include_router(vpn.router) #vpn.router
-            self.dp.include_router(unknown.router)  # unknown.router - экземпляр
-            print(f"commands.router type: {type(commands.router)}")
-            print(f"fsm_handlers.router type: {type(fsm_handlers.router)}")
-            print(f"vpn.router type: {type(vpn.router)}")
-            print(f"unknown.router type: {type(unknown.router)}")
+            self.dp.include_router(commands.router)
+            self.dp.include_router(fsm_handlers.router)
+            self.dp.include_router(vpn.router)
+            self.dp.include_router(unknown.router)
 
             logger.info("Telegram bot started and ready")
             await self.dp.start_polling(self.bot)
@@ -101,36 +103,36 @@ class Application:
     async def stop(self):
         """Корректное завершение работы"""
         logger.info("Stopping application...")
-        
+
         # Отменяем все задачи
         for task in self.tasks:
             if not task.done():
                 task.cancel()
-        
+
         # Останавливаем бот
         if self.bot:
             await self.bot.session.close()
             logger.info("Telegram bot stopped")
-        
+
         # Закрываем соединение с БД
         if self.db and self.db.pool:
             await self.db.pool.close()
             logger.info("Database connection closed")
-        
+
         logger.info("Application stopped")
+
 
 def handle_sigint(signum, frame):
     """Обработчик сигнала SIGINT (Ctrl+C)"""
     logger.info("Received SIGINT, stopping application...")
-    # Отправляем сигнал остановки в главный цикл
     for task in asyncio.all_tasks():
         task.cancel()
 
+
 async def main():
     """Основная асинхронная функция"""
-    # Устанавливаем обработчик сигнала
     signal.signal(signal.SIGINT, handle_sigint)
-    
+
     app_instance = Application()
     try:
         await app_instance.start()
@@ -141,8 +143,8 @@ async def main():
         logger.critical(f"Unexpected error: {str(e)}")
         await app_instance.stop()
     finally:
-        # Гарантируем остановку при любом сценарии
         await app_instance.stop()
+
 
 if __name__ == "__main__":
     try:
