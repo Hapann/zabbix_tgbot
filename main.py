@@ -8,6 +8,7 @@ import uvicorn
 from database.db import Database
 from handlers import commands, fsm_handlers, unknown, zabbix_api
 from logger import logger
+from handlers import vpn
 from globals import BOT_TOKEN, DB_DSN
 
 app = FastAPI()
@@ -63,9 +64,11 @@ class Application:
             # Подключаем все обработчики
             self.dp.include_router(commands.router)  # commands.router - экземпляр
             self.dp.include_router(fsm_handlers.router)  # fsm_handlers.router - экземпляр
+            self.dp.include_router(vpn.router) #vpn.router
             self.dp.include_router(unknown.router)  # unknown.router - экземпляр
             print(f"commands.router type: {type(commands.router)}")
             print(f"fsm_handlers.router type: {type(fsm_handlers.router)}")
+            print(f"vpn.router type: {type(vpn.router)}")
             print(f"unknown.router type: {type(unknown.router)}")
 
             logger.info("Telegram bot started and ready")
