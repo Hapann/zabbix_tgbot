@@ -13,6 +13,7 @@ import io, os, base64, shutil
 import urllib.parse
 from aiogram.types import FSInputFile
 from aiogram.types import BufferedInputFile
+from hashlib import sha1
 
 
 # ===================================================
@@ -41,9 +42,21 @@ def get_interfaces():
 
 
 def get_peers(config_name: str):
+    """
+    Возвращает все peers, включая заблокированные (restricted).
+    """
     resp = wg_request(f"/api/getWireguardConfigurationInfo?configurationName={config_name}")
     data = resp.get("data", {})
-    return data.get("configurationPeers", [])
+
+    peers = data.get("configurationPeers", [])
+    restricted = data.get("configurationRestrictedPeers", [])
+
+    # добавляем флаг restricted и объединяем
+    for p in restricted:
+        p["restricted"] = True
+    peers.extend(restricted)
+
+    return peers
 
 
 def create_peer(config_name: str, peer_name: str):
@@ -145,6 +158,10 @@ def generate_private_key() -> str:
         return subprocess.check_output([wg_path, "genkey"]).decode().strip()
     return base64.b64encode(os.urandom(32)).decode()
 
+def short_id(pid: str) -> str:
+    """Возвращает короткий безопасный идентификатор (до 10 символов) для callback_data"""
+    return sha1(pid.encode()).hexdigest()[:10]
+
 # ===================================================
 # FSM
 # ===================================================
@@ -240,16 +257,23 @@ async def iface_selected(query: CallbackQuery, state: FSMContext):
 
 async def show_peers(message: Message, iface: str, state: FSMContext):
     """
-    Отображает peers выбранного интерфейса:
-    🟢/🔴 статус интерфейса, список peers, действия управления.
+    Отображает peers выбранного интерфейса,
+    добавляя желтый статус 🟡 для restricted и короткие callback ID.
     """
     try:
-        # Получаем полную информацию о конфигурации
         info = wg_request(f"/api/getWireguardConfigurationInfo?configurationName={iface}")
         conf_info = info.get("data", {}).get("configurationInfo", {})
         iface_enabled = bool(conf_info.get("Status"))
         iface_status = "🟢" if iface_enabled else "🔴"
-        peers = info.get("data", {}).get("configurationPeers", [])
+
+        data = info.get("data", {})
+        peers = data.get("configurationPeers", [])
+        restricted_peers = data.get("configurationRestrictedPeers", [])
+
+        # добавляем restricted-свойство и объединяем оба списка
+        for p in restricted_peers:
+            p["restricted"] = True
+        peers.extend(restricted_peers)
     except Exception as e:
         await _send_or_edit(
             message, f"❌ Ошибка загрузки peers:\n```\n{e}\n```",
@@ -257,54 +281,57 @@ async def show_peers(message: Message, iface: str, state: FSMContext):
         )
         return
 
-    # ===================== peers =====================
+    # ===================================================
+    # Список peers
+    # ===================================================
     buttons, row = [], []
     short_cache = []
     for p in peers:
         name = (p.get("name") or "(без имени)")[:20]
         pid = p["id"]
-        status_dot = "🟢" if p.get("status") == "running" else "🔴"
+
+        # статус‑иконка
+        if p.get("restricted"):
+            status_dot = "🟡"
+        elif p.get("status") == "running":
+            status_dot = "🟢"
+        else:
+            status_dot = "🔴"
+
         label = f"{status_dot} {name}"
-        short_cache.append({"id": pid, "name": name})
-        row.append(InlineKeyboardButton(text=label, callback_data=f"peerinfo:{pid}"))
+        short_pid = short_id(pid)
+        short_cache.append({"id": pid, "short": short_pid, "name": name})
+
+        row.append(InlineKeyboardButton(text=label, callback_data=f"peerinfo:{short_pid}"))
         if len(row) == 3:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
 
-    # ===================== actions =====================
-    # power toggle
+    # ===================================================
+    # Кнопки управления интерфейсом
+    # ===================================================
     toggle_text = "🟥 Выключить интерфейс" if iface_enabled else "🟩 Включить интерфейс"
 
-    # верхняя строка кнопок
     buttons.append([
-        InlineKeyboardButton(text="📦 Скачать все конфиги",
-                             callback_data=f"download_all:{iface}"),
-        InlineKeyboardButton(text=toggle_text,
-                             callback_data=f"toggle_iface:{iface}")
+        InlineKeyboardButton(text="📦 Скачать все конфиги", callback_data=f"download_all:{iface}"),
+        InlineKeyboardButton(text=toggle_text, callback_data=f"toggle_iface:{iface}")
     ])
-
-    # нижняя строка управления
     buttons.append([
-        InlineKeyboardButton(text="🗑 Удалить конфигурацию",
-                             callback_data=f"del_config:{iface}")
+        InlineKeyboardButton(text="🗑 Удалить конфигурацию", callback_data=f"del_config:{iface}")
     ])
-
     buttons.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh:{iface}"),
-        InlineKeyboardButton(text="➕ Добавить peer", callback_data="peer_add"),
+        InlineKeyboardButton(text="➕ Добавить peer", callback_data="peer_add")
     ])
     buttons.append([
         InlineKeyboardButton(text="⬅ Назад", callback_data="back_main")
     ])
 
-    # ----------------- отрисовываем меню -----------------
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     header = f"{iface_status} *{iface}* — список peer'ов:"
     await _send_or_edit(message, header, state, parse_mode="Markdown", reply_markup=kb)
-
-    # сохраняем peers для последующего обращения
     await state.update_data(peers_cache=short_cache)
 
 
@@ -314,105 +341,117 @@ async def show_peers(message: Message, iface: str, state: FSMContext):
 @router.callback_query(F.data.startswith("peerinfo:"))
 async def peer_info(query: CallbackQuery, state: FSMContext):
     """
-    Карточка конкретного peer: показывает информацию,
-    и добавляет кнопки 📥 Скачать, 🗑 Удалить, ⬅ Назад.
+    Карточка peer: состояние, файлы, блокировка/разблокировка и удаление.
     """
-    peer_id = query.data.split(":", 1)[1]
+    peer_short = query.data.split(":", 1)[1]
     data = await state.get_data()
     iface = data.get("interface")
     peers_cache = data.get("peers_cache") or []
 
-    # ищем peer в кеше и по API
-    peer_name = next((p["name"] for p in peers_cache if p["id"] == peer_id), None)
+    # получаем настоящий peer_id
+    peer_id = next((p["id"] for p in peers_cache if p["short"] == peer_short), None)
+    if not peer_id:
+        await query.answer("Peer не найден", show_alert=True)
+        return
+
     peer = next((p for p in get_peers(iface) if p.get("id") == peer_id), None)
     if not peer:
         await query.answer("Peer не найден", show_alert=True)
         return
 
-    name = peer.get("name") or peer_name or "(без имени)"
+    name = peer.get("name") or "(без имени)"
+    is_restricted = bool(peer.get("restricted"))
+    is_running = peer.get("status") == "running"
+
+    # статус
+    if is_restricted:
+        status_emoji = "🟡 restricted"
+    elif is_running:
+        status_emoji = "🟢 running"
+    else:
+        status_emoji = "⚫️ stopped"
+
+    # --- текст карточки ---
     lines = [
         f"*Peer — {name}*",
         f"• Public Key: `{peer.get('id')}`",
         f"• Allowed IPs: `{peer.get('allowed_ip')}`",
         f"• Endpoint Allowed IPs: `{peer.get('endpoint_allowed_ip')}`",
         f"• DNS: `{peer.get('DNS')}`",
-        f"• Pre-Shared Key: `{peer.get('preshared_key')}`",
+        f"• Pre‑Shared Key: `{peer.get('preshared_key')}`",
         f"• MTU: `{peer.get('mtu')}`",
         f"• Keepalive: `{peer.get('keepalive')}`",
-        f"• Status: {'🟢 running' if peer.get('status') == 'running' else '⚫️ stopped'}",
+        f"• Status: {status_emoji}",
         f"• Last handshake: `{peer.get('latest_handshake')}`",
         f"• Traffic: ↓{peer.get('total_receive')} / ↑{peer.get('total_sent')} GB",
     ]
     text = "\n".join(lines)
 
-    # ===== КНОПКИ под карточкой =====
+    short_pid = short_id(peer_id)
+    toggle_label = "♻️ Разблокировать" if is_restricted else "🚫 Заблокировать"
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [   # кнопка скачать файл peer
-            InlineKeyboardButton(
-                text="📥 Скачать файл",
-                callback_data=f"peer_download:{peer_id}"
-            ),
-        ],
-        [   # кнопка удалить peer
-            InlineKeyboardButton(
-                text="🗑 Удалить peer",
-                callback_data=f"peer_delask:{peer_id}"
-            ),
-        ],
-        [   # кнопка назад
-            InlineKeyboardButton(
-                text="⬅ Назад",
-                callback_data=f"iface:{iface}"
-            ),
-        ],
+        [InlineKeyboardButton(text="📥 Скачать файл", callback_data=f"peer_download:{short_pid}")],
+        [InlineKeyboardButton(text=toggle_label, callback_data=f"peer_toggle_restrict:{short_pid}")],
+        [InlineKeyboardButton(text="🗑 Удалить peer", callback_data=f"peer_delask:{short_pid}")],
+        [InlineKeyboardButton(text="⬅ Назад", callback_data=f"iface:{iface}")],
     ])
 
-    await _send_or_edit(query.message, text, state,
-                        parse_mode="Markdown", reply_markup=kb)
+    await _send_or_edit(query.message, text, state, parse_mode="Markdown", reply_markup=kb)
     await query.answer()
 
 
 # ========== подтверждение удаления ==========
 @router.callback_query(F.data.startswith("peer_delask:"))
 async def peer_delete_confirm(query: CallbackQuery, state: FSMContext):
-    peer_id = query.data.split(":", 1)[1]
+    peer_short = query.data.split(":", 1)[1]
     data = await state.get_data()
     iface = data.get("interface")
     peers_cache = data.get("peers_cache") or []
-    peer_name = next((p["name"] for p in peers_cache if p["id"] == peer_id), "(без имени)")
+
+    peer_id = next((p["id"] for p in peers_cache if p["short"] == peer_short), None)
+    peer_name = next((p["name"] for p in peers_cache if p["short"] == peer_short), "(без имени)")
+
+    if not peer_id:
+        await query.answer("Peer не найден", show_alert=True)
+        return
 
     text = f"❗ Удалить peer *{peer_name}* из *{iface}*?"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Да", callback_data=f"peer_delyes:{peer_id}"),
-            InlineKeyboardButton(text="❌ Нет", callback_data=f"peerinfo:{peer_id}")
+            InlineKeyboardButton(text="✅ Да", callback_data=f"peer_delyes:{peer_short}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data=f"peerinfo:{peer_short}")
         ]
     ])
-    await _send_or_edit(query.message, text, state,
-                        parse_mode="Markdown", reply_markup=kb)
+    await _send_or_edit(query.message, text, state, parse_mode="Markdown", reply_markup=kb)
     await query.answer()
 
 
 @router.callback_query(F.data.startswith("peer_delyes:"))
 async def peer_delete_yes(query: CallbackQuery, state: FSMContext):
-    peer_id = query.data.split(":", 1)[1]
+    peer_short = query.data.split(":", 1)[1]
     data = await state.get_data()
     iface = data.get("interface")
     peers_cache = data.get("peers_cache") or []
-    name = next((p["name"] for p in peers_cache if p["id"] == peer_id), "(без имени)")
+
+    peer_id = next((p["id"] for p in peers_cache if p["short"] == peer_short), None)
+    name = next((p["name"] for p in peers_cache if p["short"] == peer_short), "(без имени)")
+
+    if not peer_id:
+        await query.answer("Peer не найден", show_alert=True)
+        return
 
     try:
         if delete_peer(iface, peer_id):
             msg = f"❌ Peer *{name}* удалён из `{iface}`"
         else:
-            msg = f"⚠️ Не удалось удалить peer *{name}*"
+            msg = f"⚠️ Не удалось удалить peer *{name}*"
     except Exception as e:
         msg = f"❌ Ошибка при удалении peer:\n```\n{e}\n```"
 
     await _send_or_edit(query.message, msg, state, parse_mode="Markdown")
     await show_peers(query.message, iface, state)
     await query.answer()
-
 
 # ===================================================
 # Добавление нового peer
@@ -447,26 +486,74 @@ async def peer_add_finish(message: Message, state: FSMContext):
 
 
 # ===================================================
+# Блокировать/разблокировать peer
+# ===================================================
+@router.callback_query(F.data.startswith("peer_toggle_restrict:"))
+async def toggle_restrict(query: CallbackQuery, state: FSMContext):
+    """
+    Переключает restricted‑состояние peer (блокировка / разблокировка)
+    через WGDashboard API.
+    """
+    peer_short = query.data.split(":", 1)[1]
+    data = await state.get_data()
+    iface = data.get("interface")
+    peers_cache = data.get("peers_cache") or []
+
+    # получаем настоящий peer_id
+    peer_id = next((p["id"] for p in peers_cache if p["short"] == peer_short), None)
+    if not peer_id:
+        await query.answer("Peer не найден", show_alert=True)
+        return
+
+    try:
+        # получаем актуальное состояние peer (включая restricted)
+        peer = next((p for p in get_peers(iface) if p.get("id") == peer_id), None)
+        if not peer:
+            await query.answer("Peer не найден", show_alert=True)
+            return
+
+        restricted = bool(peer.get("restricted"))
+
+        # корректные endpoint'ы WGDashboard:
+        # - restrictPeers/<iface>
+        # - allowAccessPeers/<iface>
+        if restricted:
+            endpoint = f"/api/allowAccessPeers/{iface}"
+            msg = f"♻️ Peer {peer.get('name')} разблокирован."
+        else:
+            endpoint = f"/api/restrictPeers/{iface}"
+            msg = f"🚫 Peer {peer.get('name')} заблокирован."
+
+        wg_request(endpoint, "POST", {"peers": [peer_id]})
+
+        # уведомляем пользователя и обновляем карточку peer
+        await query.answer(msg, show_alert=False)
+        await peer_info(query, state)
+
+    except Exception as e:
+        await query.answer(f"⚠️ Ошибка: {e}", show_alert=True)
+
+
+# ===================================================
 # Скачать peer
 # ===================================================
 @router.callback_query(F.data.startswith("peer_download:"))
 async def peer_download_callback(query: CallbackQuery, state: FSMContext):
-    """
-    Скачивает peer‑конфигурацию и отправляет пользователю .conf файл напрямую из памяти.
-    """
-    peer_id = query.data.split(":", 1)[1]
+    peer_short = query.data.split(":", 1)[1]
     data = await state.get_data()
     iface = data.get("interface")
     peers_cache = data.get("peers_cache") or []
-    peer_name = next((p["name"] for p in peers_cache if p["id"] == peer_id), "peer")
+
+    peer_id = next((p["id"] for p in peers_cache if p["short"] == peer_short), None)
+    if not peer_id:
+        await query.answer("Peer не найден", show_alert=True)
+        return
+
+    peer_name = next((p["name"] for p in peers_cache if p["short"] == peer_short), "peer")
 
     try:
-        # загружаем файл из WGDashboard API
         filename, content_bytes = download_peer_file(iface, peer_id)
         buffer = io.BytesIO(content_bytes)
-        buffer.name = f"{filename}.conf"
-
-        # aiogram 3 использует BufferedInputFile для отправки из памяти
         file_to_send = BufferedInputFile(buffer.getvalue(), filename=f"{filename}.conf")
 
         await query.message.answer_document(
@@ -474,11 +561,9 @@ async def peer_download_callback(query: CallbackQuery, state: FSMContext):
             caption=f"📄 Конфигурация для *{peer_name}*",
             parse_mode="Markdown"
         )
-
         await query.answer("Файл отправлен ✅", show_alert=False)
-
     except Exception as e:
-        await query.answer(f"⚠️ Ошибка загрузки: {e}", show_alert=True)
+        await query.answer(f"⚠️ Ошибка загрузки: {e}", show_alert=True)
 
 
 # ===================================================
