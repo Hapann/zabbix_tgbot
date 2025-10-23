@@ -14,6 +14,7 @@ import urllib.parse
 from aiogram.types import FSInputFile
 from aiogram.types import BufferedInputFile
 from hashlib import sha1
+from globals.config import WG_SERVERS
 
 
 # ===================================================
@@ -233,40 +234,132 @@ async def _send_or_edit(target, text, state: FSMContext,
 # ===================================================
 # /vpn — список всех конфигураций
 # ===================================================
-@router.message(F.text == "/vpn")
-async def cmd_vpn(message: Message, state: FSMContext):
-    await show_interfaces(message, state, force_new=True)
-
-
 async def show_interfaces(target, state: FSMContext, force_new=False):
+    """
+    Отображает список интерфейсов WireGuard для текущего выбранного сервера.
+    Меню обновляется в одном сообщении.
+    """
     try:
         configs = get_interfaces()
     except Exception as e:
         await _send_or_edit(
-            target, f"❌ Ошибка получения конфигураций:\n```\n{e}\n```",
-            state, parse_mode="Markdown", force_new=True
+            target,
+            f"❌ Ошибка получения конфигураций:\n```\n{e}\n```",
+            state,
+            parse_mode="Markdown",
+            force_new=force_new
         )
         return
 
     if not configs:
-        await _send_or_edit(target, "Нет доступных интерфейсов.", state, force_new=True)
+        await _send_or_edit(
+            target, "Нет доступных интерфейсов.", state, force_new=force_new
+        )
         return
 
     inline = []
     for cfg in configs:
         status = "🟢" if cfg.get("Status") else "🔴"
         name = cfg.get("Name", "unknown")
-        inline.append([InlineKeyboardButton(text=f"{status} {name}",
+        inline.append([InlineKeyboardButton(text=f"{status} {name}",
                                             callback_data=f"iface:{name}")])
 
     inline.append([
         InlineKeyboardButton(text="➕ Добавить конфигурацию",
                              callback_data="add_config")
     ])
+    # Кнопка перехода обратно к списку серверов
+    inline.append([
+        InlineKeyboardButton(text="🔙 К списку серверов", callback_data="back_servers")
+    ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=inline)
-    await _send_or_edit(target, "Выбери конфигурацию:", state,
-                        reply_markup=kb, force_new=force_new)
+    await _send_or_edit(
+        target,
+        "Выбери конфигурацию:",
+        state,
+        reply_markup=kb,
+        force_new=force_new
+    )
+
+
+@router.message(F.text == "/vpn")
+async def cmd_vpn(message: Message, state: FSMContext):
+    """
+    Первое меню: показывает список серверов из WG_SERVERS.
+    Работает в одном сообщении, не создаёт новые.
+    """
+    from globals.config import WG_SERVERS
+
+    if not WG_SERVERS:
+        await message.answer("⚠️ Не найдено ни одного сервера в WG_SERVERS.")
+        return
+
+    inline = [
+        [InlineKeyboardButton(text=srv["name"],
+                              callback_data=f"select_server:{srv['name']}")]
+        for srv in WG_SERVERS
+    ]
+    kb = InlineKeyboardMarkup(inline_keyboard=inline)
+    await _send_or_edit(
+        message,
+        "🌐 Выбери сервер для управления:",
+        state,
+        reply_markup=kb,
+        force_new=True
+    )
+
+
+@router.callback_query(F.data.startswith("select_server:"))
+async def on_server_selected(query: CallbackQuery, state: FSMContext):
+    """
+    После выбора сервера заменяет текущее сообщение на меню интерфейсов.
+    """
+    from globals.config import WG_SERVERS
+
+    server_name = query.data.split(":", 1)[1]
+    srv = next((s for s in WG_SERVERS if s["name"] == server_name), None)
+
+    if not srv:
+        await query.answer("Сервер не найден", show_alert=True)
+        return
+
+    # сохраняем выбранный сервер в FSMContext
+    await state.update_data(selected_server=srv)
+
+    # подменяем глобальные переменные
+    global API_URL, API_KEY
+    API_URL = srv["API_URL"]
+    API_KEY = srv["API_KEY"]
+
+    print(f"[VPN] Выбран сервер: {server_name} → {API_URL}")
+
+    await query.answer(f"✅ {server_name} выбран")
+    # обновляем то же сообщение
+    await show_interfaces(query.message, state, force_new=False)
+
+
+@router.callback_query(F.data == "back_servers")
+async def back_servers(query: CallbackQuery, state: FSMContext):
+    """
+    Возврат от интерфейсов обратно к списку серверов (редактирует то же сообщение).
+    """
+    from globals.config import WG_SERVERS
+
+    inline = [
+        [InlineKeyboardButton(text=srv["name"],
+                              callback_data=f"select_server:{srv['name']}")]
+        for srv in WG_SERVERS
+    ]
+    kb = InlineKeyboardMarkup(inline_keyboard=inline)
+    await _send_or_edit(
+        query.message,
+        "🌐 Выбери сервер для управления:",
+        state,
+        reply_markup=kb,
+        force_new=False
+    )
+    await query.answer("↩️ К списку серверов")
 
 
 # ===================================================
