@@ -15,6 +15,7 @@ from aiogram.types import FSInputFile
 from aiogram.types import BufferedInputFile
 from hashlib import sha1
 from globals.config import WG_SERVERS
+from logger.logger import logger
 
 
 # ===================================================
@@ -39,9 +40,9 @@ router = Router()
 def wg_request(endpoint, method="GET", payload=None):
     headers = {"wg-dashboard-apikey": API_KEY, "Content-Type": "application/json"}
     url = f"{API_URL}{endpoint}"
-    print(f"[DEBUG] {method} {url} payload={payload}")       # 👈 лог перед запросом
+#    print(f"[DEBUG] {method} {url} payload={payload}")       # 👈 лог перед запросом
     r = requests.request(method, url, json=payload, headers=headers, timeout=10)
-    print(f"[DEBUG] response {r.status_code}: {r.text}")     # 👈 лог ответа
+#    print(f"[DEBUG] response {r.status_code}: {r.text}")     # 👈 лог ответа
     r.raise_for_status()
     return r.json()
 
@@ -239,9 +240,12 @@ async def show_interfaces(target, state: FSMContext, force_new=False):
     Отображает список интерфейсов WireGuard для текущего выбранного сервера.
     Меню обновляется в одном сообщении.
     """
+    logger.debug("Запуск show_interfaces(force_new=%s)", force_new)
     try:
         configs = get_interfaces()
+        logger.info("Получено %d конфигураций интерфейсов.", len(configs))
     except Exception as e:
+        logger.exception("Ошибка при получении конфигураций:")
         await _send_or_edit(
             target,
             f"❌ Ошибка получения конфигураций:\n```\n{e}\n```",
@@ -252,6 +256,7 @@ async def show_interfaces(target, state: FSMContext, force_new=False):
         return
 
     if not configs:
+        logger.warning("Нет доступных интерфейсов для отображения.")
         await _send_or_edit(
             target, "Нет доступных интерфейсов.", state, force_new=force_new
         )
@@ -268,12 +273,12 @@ async def show_interfaces(target, state: FSMContext, force_new=False):
         InlineKeyboardButton(text="➕ Добавить конфигурацию",
                              callback_data="add_config")
     ])
-    # Кнопка перехода обратно к списку серверов
     inline.append([
         InlineKeyboardButton(text="🔙 К списку серверов", callback_data="back_servers")
     ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=inline)
+    logger.debug("Сформировано меню интерфейсов (%d элементов).", len(configs))
     await _send_or_edit(
         target,
         "Выбери конфигурацию:",
@@ -291,7 +296,10 @@ async def cmd_vpn(message: Message, state: FSMContext):
     """
     from globals.config import WG_SERVERS
 
+    logger.info("Пользователь %s вызвал /vpn", message.from_user.id)
+
     if not WG_SERVERS:
+        logger.warning("WG_SERVERS пуст: нет доступных серверов.")
         await message.answer("⚠️ Не найдено ни одного сервера в WG_SERVERS.")
         return
 
@@ -301,6 +309,8 @@ async def cmd_vpn(message: Message, state: FSMContext):
         for srv in WG_SERVERS
     ]
     kb = InlineKeyboardMarkup(inline_keyboard=inline)
+    logger.debug("Сформировано меню выбора серверов (%d шт).", len(WG_SERVERS))
+
     await _send_or_edit(
         message,
         "🌐 Выбери сервер для управления:",
@@ -318,24 +328,28 @@ async def on_server_selected(query: CallbackQuery, state: FSMContext):
     from globals.config import WG_SERVERS
 
     server_name = query.data.split(":", 1)[1]
+    user_id = query.from_user.id if query.from_user else "unknown"
+    logger.info("Пользователь %s выбрал сервер '%s'", user_id, server_name)
+
     srv = next((s for s in WG_SERVERS if s["name"] == server_name), None)
 
     if not srv:
+        logger.error("Сервер '%s' не найден в WG_SERVERS", server_name)
         await query.answer("Сервер не найден", show_alert=True)
         return
 
     # сохраняем выбранный сервер в FSMContext
     await state.update_data(selected_server=srv)
+    logger.debug("FSMContext обновлён: выбран сервер %s", server_name)
 
     # подменяем глобальные переменные
     global API_URL, API_KEY
     API_URL = srv["API_URL"]
     API_KEY = srv["API_KEY"]
 
-    print(f"[VPN] Выбран сервер: {server_name} → {API_URL}")
+    logger.info("[VPN] Установлен API_URL=%s", API_URL)
 
     await query.answer(f"✅ {server_name} выбран")
-    # обновляем то же сообщение
     await show_interfaces(query.message, state, force_new=False)
 
 
@@ -346,12 +360,22 @@ async def back_servers(query: CallbackQuery, state: FSMContext):
     """
     from globals.config import WG_SERVERS
 
+    user_id = query.from_user.id if query.from_user else "unknown"
+    logger.info("Пользователь %s вернулся к списку серверов", user_id)
+
+    if not WG_SERVERS:
+        logger.warning("WG_SERVERS пуст при возврате к списку серверов.")
+        await query.answer("⚠️ Нет доступных серверов.", show_alert=True)
+        return
+
     inline = [
         [InlineKeyboardButton(text=srv["name"],
                               callback_data=f"select_server:{srv['name']}")]
         for srv in WG_SERVERS
     ]
     kb = InlineKeyboardMarkup(inline_keyboard=inline)
+
+    logger.debug("Формируется главное меню серверов (%d шт).", len(WG_SERVERS))
     await _send_or_edit(
         query.message,
         "🌐 Выбери сервер для управления:",
@@ -359,7 +383,9 @@ async def back_servers(query: CallbackQuery, state: FSMContext):
         reply_markup=kb,
         force_new=False
     )
+
     await query.answer("↩️ К списку серверов")
+    logger.debug("Сообщение обновлено: пользователь %s видит список серверов.", user_id)
 
 
 # ===================================================
@@ -447,12 +473,13 @@ async def show_peers(message: Message, iface: str, state: FSMContext):
 
 
 # ================================================================
-# Список редактирвоания интерфейса
+# Список редактирования интерфейса
 # ================================================================
 @router.callback_query(F.data.startswith("iface_edit:"))
 async def iface_edit_start(query: CallbackQuery, state: FSMContext):
     """Показывает список редактируемых полей конфигурации."""
     iface = query.data.split(":", 1)[1]
+    logger.info(f"[VPN] Пользователь выбрал редактирование интерфейса {iface}")
 
     fields = [
         ["Address", "ListenPort"],
@@ -469,15 +496,22 @@ async def iface_edit_start(query: CallbackQuery, state: FSMContext):
     await state.update_data(iface=iface)
     await query.message.edit_text("Выбери параметр для изменения:", reply_markup=kb)
     await query.answer()
+    logger.debug(f"[VPN] Интерфейс {iface}: показан список параметров для изменения")
 
 
 @router.callback_query(F.data.startswith("iface_field:"))
 async def iface_field_selected(query: CallbackQuery, state: FSMContext):
     """После выбора поля показывает текущее значение и ждёт ввод нового."""
     _, iface, field = query.data.split(":", 2)
+    logger.info(f"[VPN] Пользователь выбрал поле {field} для изменения в интерфейсе {iface}")
 
-    conf = next((c for c in get_interfaces() if c.get("Name") == iface), None)
-    current_value = conf.get(field) if conf and field in conf else "(пусто)"
+    try:
+        conf = next((c for c in get_interfaces() if c.get("Name") == iface), None)
+        current_value = conf.get(field) if conf and field in conf else "(пусто)"
+    except Exception as e:
+        logger.exception(f"[VPN] Ошибка при получении данных интерфейса {iface}: {e}")
+        await query.answer(f"⚠️ Ошибка: {e}", show_alert=True)
+        return
 
     await state.update_data(iface=iface, field=field, old_value=current_value)
     await state.set_state(IfaceEditStates.waiting_value)
@@ -492,6 +526,8 @@ async def iface_field_selected(query: CallbackQuery, state: FSMContext):
     )
     await query.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
     await query.answer()
+    logger.debug(f"[VPN] Интерфейс {iface}, поле {field}: текущее значение '{current_value}' показано пользователю")
+
 
 
 # ================================================================
@@ -504,6 +540,10 @@ async def iface_edit_get_value(message: Message, state: FSMContext):
     data = await state.get_data()
     field = data.get("field")
     old_value = data.get("old_value")
+    iface = data.get("iface")
+
+    logger.info(f"[VPN] Интерфейс {iface}, параметр {field}: пользователь ввёл новое значение '{new_value}' "
+                f"(старое '{old_value}')")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -525,21 +565,18 @@ async def iface_edit_get_value(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "iface_confirm_yes")
 async def iface_confirm_yes(query: CallbackQuery, state: FSMContext):
-    """
-    Подтверждение изменения: собирает полную конфигурацию,
-    корректирует типы и шлёт updateWireguardConfiguration.
-    """
+    """Подтверждение изменения: собирает полную конфигурацию и шлёт updateWireguardConfiguration."""
     data = await state.get_data()
     iface = data.get("iface")
     field = data.get("field")
     new_value = data.get("new_value")
 
     if not iface:
+        logger.warning("[VPN] iface отсутствует при подтверждении изменения интерфейса")
         await query.answer("Ошибка: имя интерфейса отсутствует", show_alert=True)
         await state.clear()
         return
 
-    # Типы полей
     FIELD_TYPES = {
         "Address": str,
         "ListenPort": int,
@@ -549,56 +586,59 @@ async def iface_confirm_yes(query: CallbackQuery, state: FSMContext):
         "PreDown": str,
     }
 
-    conf = next((c for c in get_interfaces() if c.get("Name") == iface), None)
-    if not conf:
-        await query.answer("Конфигурация не найдена", show_alert=True)
-        await state.clear()
-        return
-
-    # Полный payload (все ключи, чтобы WGDashboard не падал)
-    update_payload = {
-        "Name": iface,  # обязательно текущее имя, иначе 404
-        "Address": conf.get("Address"),
-        "ListenPort": int(conf.get("ListenPort") or 0),
-        "PostUp": conf.get("PostUp", ""),
-        "PostDown": conf.get("PostDown", ""),
-        "PreUp": conf.get("PreUp", ""),
-        "PreDown": conf.get("PreDown", ""),
-        "PrivateKey": conf.get("PrivateKey", ""),
-        "PublicKey": conf.get("PublicKey", ""),
-        "Protocol": conf.get("Protocol", "wg"),
-        "SaveConfig": conf.get("SaveConfig", True),
-        "Table": conf.get("Table", "")
-    }
-
-    # авто-преобразование типов
-    expected_type = FIELD_TYPES.get(field, str)
-    if expected_type is int:
-        try:
-            update_payload[field] = int(new_value)
-        except ValueError:
-            await query.answer(f"Поле {field} должно быть числом", show_alert=True)
-            return
-    else:
-        update_payload[field] = str(new_value)
-
     try:
-        print(f"[DEBUG] updateWireguardConfiguration payload={update_payload}")
+        conf = next((c for c in get_interfaces() if c.get("Name") == iface), None)
+        if not conf:
+            logger.warning(f"[VPN] Конфигурация {iface} не найдена при обновлении")
+            await query.answer("Конфигурация не найдена", show_alert=True)
+            await state.clear()
+            return
+
+        update_payload = {
+            "Name": iface,
+            "Address": conf.get("Address"),
+            "ListenPort": int(conf.get("ListenPort") or 0),
+            "PostUp": conf.get("PostUp", ""),
+            "PostDown": conf.get("PostDown", ""),
+            "PreUp": conf.get("PreUp", ""),
+            "PreDown": conf.get("PreDown", ""),
+            "PrivateKey": conf.get("PrivateKey", ""),
+            "PublicKey": conf.get("PublicKey", ""),
+            "Protocol": conf.get("Protocol", "wg"),
+            "SaveConfig": conf.get("SaveConfig", True),
+            "Table": conf.get("Table", "")
+        }
+
+        expected_type = FIELD_TYPES.get(field, str)
+        if expected_type is int:
+            try:
+                update_payload[field] = int(new_value)
+            except ValueError:
+                logger.warning(f"[VPN] Поле {field} ожидало число, получено '{new_value}'")
+                await query.answer(f"Поле {field} должно быть числом", show_alert=True)
+                return
+        else:
+            update_payload[field] = str(new_value)
+
+        logger.info(f"[VPN] Обновление интерфейса {iface}: {field}: '{conf.get(field)}' → '{new_value}'")
+        logger.debug(f"[VPN] updateWireguardConfiguration payload={update_payload}")
+
         result = wg_request("/api/updateWireguardConfiguration", "POST", update_payload)
-        print(f"[DEBUG] result={result}")
+        logger.debug(f"[VPN] Ответ WGDashboard при обновлении {iface}: {result}")
+
         if not result.get("status"):
             raise RuntimeError(result.get("message") or "WGDashboard вернул status=False")
 
+        logger.info(f"[VPN] Интерфейс {iface} успешно обновлён (поле {field})")
         await query.answer("✅ Конфигурация изменена", show_alert=False)
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        logger.exception(f"[VPN] Ошибка при обновлении интерфейса {iface}: {e}")
         await query.answer(f"⚠️ Ошибка: {e}", show_alert=True)
         return
 
-    iface_name = iface
     await state.clear()
-    await show_peers(query.message, iface_name, state)
+    await show_peers(query.message, iface, state)
 
 
 @router.callback_query(F.data == "iface_confirm_no")
@@ -606,6 +646,8 @@ async def iface_confirm_no(query: CallbackQuery, state: FSMContext):
     """Отмена изменения -> возвращаем карточку интерфейса."""
     data = await state.get_data()
     iface = data.get("iface")
+
+    logger.info(f"[VPN] Отмена изменения конфигурации интерфейса {iface} пользователем")
 
     await query.answer("Отменено", show_alert=False)
     await state.clear()
@@ -724,11 +766,15 @@ async def peer_delete_yes(query: CallbackQuery, state: FSMContext):
         return
 
     try:
+        logger.info(f"[VPN] Удаление peer {name} ({peer_id}) из {iface}")
         if delete_peer(iface, peer_id):
             msg = f"❌ Peer *{name}* удалён из `{iface}`"
+            logger.info(f"[VPN] Peer {name} успешно удалён из {iface}")
         else:
             msg = f"⚠️ Не удалось удалить peer *{name}*"
+            logger.warning(f"[VPN] Не удалось удалить peer {name} ({peer_id})")
     except Exception as e:
+        logger.exception(f"[VPN] Исключение при удалении peer {name} ({peer_id}): {e}")
         msg = f"❌ Ошибка при удалении peer:\n```\n{e}\n```"
 
     await _send_or_edit(query.message, msg, state, parse_mode="Markdown")
@@ -756,14 +802,16 @@ async def peer_add_finish(message: Message, state: FSMContext):
     iface = (await state.get_data()).get("interface")
     peer_name = message.text.strip()
     try:
+        logger.info(f"[VPN] Создание peer '{peer_name}' в конфигурации {iface}")
         peer_id = create_peer(iface, peer_name)
+        logger.info(f"[VPN] Peer '{peer_name}' создан в {iface}, id={peer_id}")
         await message.answer(
             f"✅ Peer *{peer_name}* создан в `{iface}`\nPublic key: `{peer_id}`",
             parse_mode="Markdown"
         )
     except Exception as e:
-        await message.answer(f"❌ Ошибка создания peer:\n```\n{e}\n```",
-                             parse_mode="Markdown")
+        logger.exception(f"[VPN] Ошибка создания peer '{peer_name}' в {iface}: {e}")
+        await message.answer(f"❌ Ошибка создания peer:\n```\n{e}\n```", parse_mode="Markdown")
     await show_peers(message, iface, state)
 
 
@@ -789,16 +837,17 @@ async def toggle_restrict(query: CallbackQuery, state: FSMContext):
         restricted = bool(peer.get("restricted"))
         if restricted:
             endpoint = f"/api/allowAccessPeers/{iface}"
-            msg = f"♻️ Peer {peer.get('name')} разблокирован."
+            human = "разблокирован"
         else:
             endpoint = f"/api/restrictPeers/{iface}"
-            msg = f"🚫 Peer {peer.get('name')} заблокирован."
+            human = "заблокирован"
 
         wg_request(endpoint, "POST", {"peers": [peer_id]})
-        await query.answer(msg, show_alert=False)
+        logger.info(f"[VPN] Peer {peer.get('name')} ({peer_id}) в {iface} {human}")
+        await query.answer(f"♻️ Peer {peer.get('name')} {human}", show_alert=False)
         await peer_info(query, state)
-
     except Exception as e:
+        logger.exception(f"[VPN] Ошибка при блокировке peer {peer_id}: {e}")
         await query.answer(f"⚠️ Ошибка: {e}", show_alert=True)
 
 
@@ -923,20 +972,18 @@ async def peer_edit_confirm_yes(query: CallbackQuery, state: FSMContext):
     new_value = data.get("new_value")
 
     if not iface:
+        logger.warning("[VPN] iface отсутствует при попытке изменения peer")
         await query.answer("Ошибка: iface отсутствует", show_alert=True)
         await state.clear()
         return
 
-    # 1️⃣ Таблица типов полей peer
     FIELD_TYPES = {
-        # строковые поля
         "DNS": str,
         "allowed_ip": str,
         "endpoint_allowed_ip": str,
         "name": str,
         "preshared_key": str,
         "private_key": str,
-        # числовые поля
         "keepalive": int,
         "mtu": int,
     }
@@ -945,11 +992,15 @@ async def peer_edit_confirm_yes(query: CallbackQuery, state: FSMContext):
         peers = get_peers(iface)
         peer = next((p for p in peers if p.get("id") == peer_id), None)
         if not peer:
+            logger.warning(f"[VPN] Peer {peer_id} не найден в {iface}")
             await query.answer("Peer не найден", show_alert=True)
             await state.clear()
             return
 
-        # 2️⃣ Собираем полный payload
+        old_value = peer.get(field)
+        logger.info(f"[VPN] Изменение peer {peer.get('name')} ({peer_id}) в {iface}: "
+                    f"{field}: '{old_value}' → '{new_value}'")
+
         update_payload = {
             "id": peer_id,
             "DNS": peer.get("DNS", ""),
@@ -962,56 +1013,54 @@ async def peer_edit_confirm_yes(query: CallbackQuery, state: FSMContext):
             "private_key": peer.get("private_key", "")
         }
 
-        # 3️⃣ Типобезопасная установка нового поля
         expected_type = FIELD_TYPES.get(field, str)
         if expected_type is int:
             try:
                 update_payload[field] = int(new_value)
             except ValueError:
+                logger.warning(f"[VPN] Некорректное значение '{new_value}' для поля {field} (ожидалось число)")
                 await query.answer(f"Поле {field} должно быть числом", show_alert=True)
                 return
         else:
             update_payload[field] = str(new_value)
 
-        print(f"[DEBUG] updatePeerSettings/{iface} payload={update_payload}")
+        logger.debug(f"[VPN] updatePeerSettings/{iface} payload={update_payload}")
         result = wg_request(f"/api/updatePeerSettings/{iface}", "POST", update_payload)
-        print(f"[DEBUG] result={result}")
+        logger.debug(f"[VPN] Результат обновления peer: {result}")
 
         if not result.get("status"):
             raise RuntimeError(result.get("message") or "WGDashboard вернул status=False")
 
+        logger.info(f"[VPN] Peer {peer.get('name')} ({peer_id}) успешно обновлён.")
         await query.answer("✅ Изменения применены", show_alert=False)
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        logger.exception(f"[VPN] Ошибка при обновлении peer {peer_id} в {iface}: {e}")
         await query.answer(f"⚠️ Ошибка: {e}", show_alert=True)
         return
 
-    iface_name = iface
     await state.clear()
-    await show_peers(query.message, iface_name, state)
+    await show_peers(query.message, iface, state)
 
 
 @router.callback_query(F.data == "edit_confirm_no")
 async def peer_edit_confirm_no(query: CallbackQuery, state: FSMContext):
-    """
-    Отмена изменения: возвращаем карточку того же peer в то же сообщение.
-    """
+    """Отмена изменения peer."""
     data = await state.get_data()
     iface = data.get("iface")
     peer_short = data.get("peer_short")
 
     if not iface or not peer_short:
+        logger.warning("[VPN] Отмена изменения peer: отсутствуют iface или peer_short")
         await query.answer("Ошибка: данные не найдены", show_alert=True)
         return
 
+    logger.info(f"[VPN] Изменение peer (iface={iface}, short={peer_short}) отменено пользователем")
+
     await query.answer("Отменено", show_alert=False)
-    # очищаем временные ключи, но не peers_cache
     for k in ("edit_field", "new_value", "old_value", "peer_id"):
         data.pop(k, None)
     await state.update_data(**data)
-
-    # просто редактируем это же сообщение карточкой peer
     await peer_info_from_data(query.message, iface, peer_short, state)
 
 
@@ -1029,9 +1078,11 @@ async def peer_download_callback(query: CallbackQuery, state: FSMContext):
     peer_name = next((p["name"] for p in peers_cache if p["short"] == peer_short), "peer")
 
     if not peer_id:
+        logger.warning(f"[VPN] Скачивание peer: не найден short_id={peer_short} в {iface}")
         await query.answer("Peer не найден", show_alert=True)
         return
 
+    logger.info(f"[VPN] Скачивание конфигурации peer {peer_name} ({peer_id}) из {iface}")
     try:
         filename, content_bytes = download_peer_file(iface, peer_id)
         buffer = io.BytesIO(content_bytes)
@@ -1042,9 +1093,11 @@ async def peer_download_callback(query: CallbackQuery, state: FSMContext):
             caption=f"📄 Конфигурация для *{peer_name}*",
             parse_mode="Markdown"
         )
+        logger.info(f"[VPN] Конфиг {filename}.conf для peer {peer_name} отправлен пользователю")
         await query.answer("Файл отправлен ✅", show_alert=False)
 
     except Exception as e:
+        logger.exception(f"[VPN] Ошибка при скачивании файла peer {peer_name} ({peer_id}): {e}")
         await query.answer(f"⚠️ Ошибка загрузки: {e}", show_alert=True)
 
 
@@ -1054,16 +1107,20 @@ async def peer_download_callback(query: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("download_all:"))
 async def download_all_peers_callback(query: CallbackQuery, state: FSMContext):
     iface = query.data.split(":", 1)[1]
+    logger.info(f"[VPN] Запрошено скачивание архива всех peer для {iface}")
     try:
         filename, zip_bytes = download_all_peers_zip(iface)
         file_to_send = BufferedInputFile(zip_bytes, filename=filename)
+
         await query.message.answer_document(
             document=file_to_send,
             caption=f"📦 Архив всех конфигов для *{iface}*",
             parse_mode="Markdown"
         )
+        logger.info(f"[VPN] Архив {filename} успешно отправлен пользователю")
         await query.answer("Архив отправлен ✅", show_alert=False)
     except Exception as e:
+        logger.exception(f"[VPN] Ошибка при скачивании архива peer для {iface}: {e}")
         await query.answer(f"⚠️ Ошибка: {e}", show_alert=True)
 
 
@@ -1073,7 +1130,9 @@ async def download_all_peers_callback(query: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("del_config:"))
 async def config_delete_confirm(query: CallbackQuery, state: FSMContext):
     iface = query.data.split(":", 1)[1]
-    text = f"❗ Вы уверены, что хотите удалить конфигурацию *{iface}* ?"
+    logger.info(f"[VPN] Пользователь запросил удаление конфигурации {iface}")
+
+    text = f"❗ Вы уверены, что хотите удалить конфигурацию *{iface}* ?"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да", callback_data=f"del_config_yes:{iface}"),
@@ -1108,17 +1167,21 @@ async def config_delete_yes(query: CallbackQuery, state: FSMContext):
 async def iface_toggle(query: CallbackQuery, state: FSMContext):
     iface = query.data.split(":", 1)[1]
     try:
+        logger.info(f"[VPN] Переключение интерфейса {iface}...")
         new_state, ok = toggle_config(iface)
         if ok:
+            human_state = "включён" if new_state else "выключен"
+            logger.info(f"[VPN] Интерфейс {iface} успешно {human_state}")
             text = "🟢 Интерфейс включён" if new_state else "🔴 Интерфейс выключен"
             await query.answer(text, show_alert=False)
         else:
+            logger.warning(f"[VPN] WGDashboard вернул status=False при переключении {iface}")
             await query.answer("⚠️ Не удалось переключить интерфейс", show_alert=True)
     except Exception as e:
+        logger.exception(f"[VPN] Ошибка при переключении интерфейса {iface}: {e}")
         await query.answer(f"Ошибка: {e}", show_alert=True)
         return
 
-    # после переключения обновляем экран
     await show_peers(query.message, iface, state)
 
 
@@ -1153,33 +1216,33 @@ async def add_config_process(message: Message, state: FSMContext):
         text = text.strip("`").strip()
     try:
         payload = json.loads(text)
+        logger.info(f"[VPN] Запрошено создание конфигурации: {payload}")
     except Exception as e:
+        logger.exception("[VPN] Ошибка чтения JSON при создании конфигурации")
         await message.answer(f"❌ Ошибка чтения JSON:\n```\n{e}\n```", parse_mode="Markdown")
         await show_interfaces(message, state, force_new=True)
         await state.clear()
         return
 
-    # ── Добавляем недостающие поля ──
-    if not payload.get("PrivateKey"):
-        try:
+    try:
+        if not payload.get("PrivateKey"):
             payload["PrivateKey"] = generate_private_key()
-            await message.answer("🔑 Private key сгенерирован автоматически.")
-        except Exception as e:
-            await message.answer(f"⚠️ Не удалось сгенерировать ключ:\n```\n{e}\n```",
+            logger.debug(f"[VPN] PrivateKey для {payload.get('ConfigurationName')} сгенерирован автоматически")
+
+        if not payload.get("Protocol"):
+            payload["Protocol"] = "wg"
+
+        ok, msg = add_wireguard_config(payload)
+        if ok:
+            logger.info(f"[VPN] Конфигурация {payload.get('ConfigurationName')} успешно создана.")
+            await message.answer("✅ Конфигурация успешно создана.")
+        else:
+            logger.error(f"[VPN] Ошибка создания конфигурации {payload.get('ConfigurationName')}: {msg}")
+            await message.answer(f"⚠️ Ошибка создания:\n```\n{msg or 'Неизвестная ошибка'}\n```",
                                  parse_mode="Markdown")
-            await show_interfaces(message, state, force_new=True)
-            await state.clear()
-            return
-
-    if not payload.get("Protocol"):
-        payload["Protocol"] = "wg"
-
-    # создаём конфигурацию
-    ok, msg = add_wireguard_config(payload)
-    if ok:
-        await message.answer("✅ Конфигурация успешно создана.")
-    else:
-        await message.answer(f"⚠️ Ошибка создания:\n```\n{msg or 'Неизвестная ошибка'}\n```",
+    except Exception as e:
+        logger.exception(f"[VPN] Исключение при создании конфигурации: {e}")
+        await message.answer(f"⚠️ Ошибка создания конфигурации:\n```\n{e}\n```",
                              parse_mode="Markdown")
 
     await show_interfaces(message, state, force_new=True)
@@ -1207,11 +1270,19 @@ async def config_delete_confirm(query: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("del_config_yes:"))
 async def config_delete_yes(query: CallbackQuery, state: FSMContext):
     iface = query.data.split(":", 1)[1]
-    ok, msg = delete_wireguard_config(iface)
-    if ok:
-        text = f"🗑 Конфигурация *{iface}* успешно удалена."
-    else:
-        text = f"⚠️ Ошибка удаления:\n```\n{msg or 'Неизвестная ошибка'}\n```"
+    try:
+        logger.info(f"[VPN] Удаление конфигурации {iface} запущено")
+        ok, msg = delete_wireguard_config(iface)
+        if ok:
+            logger.info(f"[VPN] Конфигурация {iface} успешно удалена")
+            text = f"🗑 Конфигурация *{iface}* успешно удалена."
+        else:
+            logger.error(f"[VPN] Ошибка удаления конфигурации {iface}: {msg}")
+            text = f"⚠️ Ошибка при удалении *{iface}*:\n```\n{msg or 'Неизвестная ошибка'}\n```"
+    except Exception as e:
+        logger.exception(f"[VPN] Исключение при удалении конфигурации {iface}: {e}")
+        text = f"❌ Ошибка удаления:\n```\n{e}\n```"
+
     await _send_or_edit(query.message, text, state, parse_mode="Markdown")
     await show_interfaces(query.message, state)
 
