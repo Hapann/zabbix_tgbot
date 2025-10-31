@@ -9,6 +9,7 @@ from database.db import Database
 from handlers import commands, fsm_handlers, unknown, zabbix_api, vpn
 from handlers import logs_pm
 from handlers import cloud
+from handlers import cloud_vapp
 from logger.logger import logger
 from globals.config import BOT_TOKEN, DB_DSN
 from middlewares.admin_filter import AdminAccessMiddleware
@@ -73,6 +74,7 @@ class Application:
             self.dp.include_router(vpn.router)
             logs_pm.register_logs_pm_handler(self.dp)  # 👈 Подключаем /logs
             self.dp.include_router(cloud.router)
+            self.dp.include_router(cloud_vapp.router)
             self.dp.include_router(unknown.router)
 
             logger.info("Telegram bot started and ready")
