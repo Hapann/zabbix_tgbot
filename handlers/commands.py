@@ -27,7 +27,8 @@ async def help_handler(message: Message):
         "/stats - статистика по инцидентам\n"
         "/active - список активных инцидентов\n"
         "/vpn - управление конфигурациями Wireguard\n"
-        "/cloudinfo - информация о ресурсах Cloud"
+        "/cloudinfo - информация о ресурсах Cloud\n"
+        "/cloudvapp - статистика и информация по vApp + snapshots + VM"
     )
 
 @router.message(Command(commands=["rules"]))
@@ -42,7 +43,7 @@ async def rules_handler(message: Message):
         "5. Ответственный может переназначить инцидент другому сотруднику.\n"
         "6. Закрытые инциденты можно переоткрыть при необходимости.\n"
         "7. Управление конфигурациями Wireguard по необходимости.\n"
-        "8. Получение инофрмации по остаточным ресурсам Cloud."
+        "8. Получение инофрмации по остаточным ресурсам Cloud и их распределению"
     )
 
 @router.message(Command(commands=["stats"]))
