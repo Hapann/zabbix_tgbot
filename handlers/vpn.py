@@ -813,6 +813,7 @@ async def peer_add_finish(message: Message, state: FSMContext):
         logger.exception(f"[VPN] Ошибка создания peer '{peer_name}' в {iface}: {e}")
         await message.answer(f"❌ Ошибка создания peer:\n```\n{e}\n```", parse_mode="Markdown")
     await show_peers(message, iface, state)
+    await state.clear()
 
 
 # ===================================================
